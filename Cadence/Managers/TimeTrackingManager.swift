@@ -12,6 +12,7 @@ class TimeTrackingManager {
     // Current state
     var currentTimeBlock: TimeBlock?
     var activeSet: ActivitySet?
+    var currentTimeBlockRule: TimeBlockRule? // Currently active rule
     
     // Background tracking
     var backgroundEnteredTime: Date?
@@ -34,6 +35,9 @@ class TimeTrackingManager {
         
         // Setup background tracking
         setupBackgroundTracking()
+        
+        // Check time blocks immediately on launch
+        checkAndSwitchActivitySet()
     }
     
     // MARK: - Timer Management
@@ -56,6 +60,71 @@ class TimeTrackingManager {
     deinit {
         // Can't access MainActor properties in deinit
         // Timer will be cleaned up automatically when object is deallocated
+    }
+    
+    // MARK: - Time Block Auto-Switching
+    
+    func checkAndSwitchActivitySet() {
+        // Fetch all time block rules
+        let descriptor = FetchDescriptor<TimeBlockRule>(
+            sortBy: [SortDescriptor(\.startTime, order: .forward)]
+        )
+        
+        guard let rules = try? modelContext.fetch(descriptor) else { return }
+        
+        // Find the currently active rule
+        let activeRule = rules.first { $0.isActiveNow() }
+        
+        // Check if we need to switch sets
+        if let rule = activeRule, let setID = rule.linkedSetID {
+            // Update current rule
+            currentTimeBlockRule = rule
+            
+            // Check if we need to switch
+            let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
+            let currentActiveSet = sets?.first { $0.isActive }
+            
+            if currentActiveSet?.id != setID {
+                // Switch to the new set
+                if let targetSet = sets?.first(where: { $0.id == setID }) {
+                    switchToActivitySet(targetSet)
+                }
+            }
+        } else {
+            currentTimeBlockRule = nil
+        }
+    }
+    
+    private func switchToActivitySet(_ set: ActivitySet) {
+        let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
+        
+        // Deactivate all sets
+        sets?.forEach { $0.isActive = false }
+        
+        // Activate target set
+        set.isActive = true
+        activeSet = set
+        
+        try? modelContext.save()
+        
+        // Show notification about switch
+        showSetSwitchNotification(setName: set.name)
+    }
+    
+    private func showSetSwitchNotification(setName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Activity Set Changed"
+        content.body = "Switched to \(setName) activities"
+        content.sound = .default
+        
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        let request = UNNotificationRequest(identifier: "setSwitch", content: content, trigger: trigger)
+        
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                print("Error showing notification: \(error)")
+            }
+        }
     }
     
     // MARK: - Background Tracking Setup
@@ -112,6 +181,9 @@ class TimeTrackingManager {
         
         // Cancel any pending reminder notifications
         cancelBackgroundReminder()
+        
+        // Check if time block changed while backgrounded
+        checkAndSwitchActivitySet()
     }
     
     private func scheduleBackgroundReminder() {

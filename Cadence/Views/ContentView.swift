@@ -17,26 +17,40 @@ struct ContentView: View {
                         }
                         .tag(0)
                     
-                    // Today's timeline
-                    TimelineView(manager: manager)
+                    // Records view
+                    RecordsView()
                         .tabItem {
-                            Label("Timeline", systemImage: "list.bullet")
+                            Label("Records", systemImage: "list.bullet.rectangle")
                         }
                         .tag(1)
                     
-                    // Stats and charts
-                    StatsView(manager: manager)
+                    // NEW: Reports
+                    ReportsView()
                         .tabItem {
-                            Label("Stats", systemImage: "chart.bar")
+                            Label("Reports", systemImage: "chart.xyaxis.line")
                         }
                         .tag(2)
                     
-                    // Settings and activity management
+                    // Stats and charts (Today only - keep for quick daily view)
+                    StatsView(manager: manager)
+                        .tabItem {
+                            Label("Today", systemImage: "chart.bar")
+                        }
+                        .tag(3)
+                    
+                    // Sets and time blocks
+                    SetsView()
+                        .tabItem {
+                            Label("Sets", systemImage: "square.grid.2x2")
+                        }
+                        .tag(4)
+                    
+                    // Settings
                     SettingsView()
                         .tabItem {
                             Label("Settings", systemImage: "gear")
                         }
-                        .tag(3)
+                        .tag(5)
                 }
             } else {
                 ProgressView("Loading...")
@@ -50,5 +64,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Activity.self, ActivitySet.self, TimeBlock.self], inMemory: true)
+        .modelContainer(for: [Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self], inMemory: true)
 }

@@ -91,6 +91,21 @@ final class TimeBlockRule {
             return nowMinutes >= startMinutes && nowMinutes < endMinutes
         }
     }
+    
+    var timeRangeDisplay: String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        return "\(formatter.string(from: startTime)) - \(formatter.string(from: endTime))"
+    }
+    
+    var daysOfWeekDisplay: String {
+        if daysOfWeek.isEmpty {
+            return "Every day"
+        }
+        
+        let dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        return daysOfWeek.sorted().map { dayNames[$0 - 1] }.joined(separator: ", ")
+    }
 }
 
 // MARK: - Time Block Model

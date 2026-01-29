@@ -12,7 +12,8 @@ struct CadenceApp: App {
             let schema = Schema([
                 Activity.self,
                 ActivitySet.self,
-                TimeBlock.self
+                TimeBlock.self,
+                TimeBlockRule.self  // NEW: Time block rules for auto-switching
             ])
             
             let modelConfiguration = ModelConfiguration(
@@ -96,6 +97,32 @@ struct CadenceApp: App {
                 )
                 context.insert(activity)
             }
+            
+            // Create example time block rules
+            let calendar = Calendar.current
+            let workStart = calendar.date(from: DateComponents(hour: 9, minute: 0))!
+            let workEnd = calendar.date(from: DateComponents(hour: 17, minute: 0))!
+            let eveningStart = calendar.date(from: DateComponents(hour: 18, minute: 0))!
+            let eveningEnd = calendar.date(from: DateComponents(hour: 23, minute: 0))!
+            
+            let workHours = TimeBlockRule(
+                name: "Work Hours",
+                startTime: workStart,
+                endTime: workEnd,
+                linkedSetID: workSet.id,
+                daysOfWeek: [2, 3, 4, 5, 6] // Monday to Friday
+            )
+            
+            let eveningTime = TimeBlockRule(
+                name: "Evening",
+                startTime: eveningStart,
+                endTime: eveningEnd,
+                linkedSetID: personalSet.id,
+                daysOfWeek: [] // All days
+            )
+            
+            context.insert(workHours)
+            context.insert(eveningTime)
             
             try? context.save()
         }
