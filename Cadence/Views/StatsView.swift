@@ -267,10 +267,13 @@ struct TimelineChart: View {
     let context = container.mainContext
     
     // Create preview data
+    let setID = UUID()
+    
     let block1 = TimeBlock(
         activityID: UUID(),
         activityName: "Deep Work",
         activityColor: "#4CAF50",
+        activitySetID: setID,
         startTime: Date().addingTimeInterval(-7200)
     )
     block1.endTime = Date().addingTimeInterval(-3600)
@@ -279,6 +282,7 @@ struct TimelineChart: View {
         activityID: UUID(),
         activityName: "Email",
         activityColor: "#FF9800",
+        activitySetID: setID,
         startTime: Date().addingTimeInterval(-3600)
     )
     block2.endTime = Date().addingTimeInterval(-1800)

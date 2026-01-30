@@ -1,193 +1,197 @@
 import SwiftUI
 import SwiftData
+import Combine
 
 struct TrackingView: View {
+    @ObservedObject var manager: TimeTrackingManager
     @Environment(\.modelContext) private var modelContext
+    
     @Query private var activitySets: [ActivitySet]
     @Query private var activities: [Activity]
     
-    @Bindable var manager: TimeTrackingManager
-    
-    @State private var currentTime = Date()
-    @State private var timer: Timer?
+    @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     var activeSet: ActivitySet? {
-        activitySets.first(where: { $0.isActive })
+        activitySets.first { $0.isActive }
     }
     
-    var filteredActivities: [Activity] {
+    var activeSetActivities: [Activity] {
         guard let setID = activeSet?.id else { return [] }
         return activities.filter { $0.setID == setID }.sorted { $0.sortOrder < $1.sortOrder }
     }
     
+    // Check if current block is a Pause
+    var isCurrentlyPaused: Bool {
+        manager.currentTimeBlock?.isPauseBlock ?? false
+    }
+    
+    // Get the last activity before pause (for Resume button)
+    var lastActivityBeforePause: Activity? {
+        guard isCurrentlyPaused else { return nil }
+        
+        // Find the most recent non-pause/non-gap activity
+        let descriptor = FetchDescriptor<TimeBlock>(
+            predicate: #Predicate { block in
+                block.blockType == "activity" && block.endTime != nil
+            },
+            sortBy: [SortDescriptor(\.endTime, order: .reverse)]
+        )
+        
+        guard let lastActivityBlock = try? modelContext.fetch(descriptor).first,
+              let activityID = lastActivityBlock.activityID,
+              let activity = activities.first(where: { $0.id == activityID }) else {
+            return nil
+        }
+        
+        return activity
+    }
+    
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                // Current Activity Display
-                CurrentActivityCard(manager: manager, currentTime: currentTime)
-                    .padding()
-                
-                // Time Block Indicator
-                if let rule = manager.currentTimeBlockRule {
-                    HStack {
-                        Image(systemName: "clock.badge.checkmark")
-                            .foregroundStyle(.blue)
-                        Text(rule.name)
-                            .font(.subheadline)
-                        Text("•")
-                            .foregroundStyle(.secondary)
-                        Text(rule.timeRangeDisplay)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            ScrollView {
+                VStack(spacing: 20) {
+                    // Activity Set Picker
+                    if activitySets.count > 1 {
+                        ActivitySetPicker(sets: activitySets)
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .background(Color.blue.opacity(0.1))
-                }
-                
-                Divider()
-                
-                // Activity Set Switcher
-                if activitySets.count > 1 {
-                    ActivitySetPicker(sets: activitySets)
-                        .padding(.horizontal)
-                        .padding(.top)
-                }
-                
-                // Activity Grid
-                ScrollView {
+                    
+                    // Current Activity Display
+                    CurrentActivityCard(
+                        block: manager.currentTimeBlock,
+                        isPaused: isCurrentlyPaused,
+                        onPause: {
+                            manager.pauseCurrentActivity()
+                        },
+                        onStop: {
+                            manager.stopCurrentActivity()
+                        },
+                        onResume: {
+                            if let activity = lastActivityBeforePause {
+                                manager.resumeFromPause(activity)
+                            }
+                        }
+                    )
+                    
+                    // Activity Buttons Grid
                     LazyVGrid(columns: [
+                        GridItem(.flexible()),
                         GridItem(.flexible()),
                         GridItem(.flexible())
                     ], spacing: 12) {
-                        ForEach(filteredActivities) { activity in
+                        ForEach(activeSetActivities) { activity in
                             ActivityButton(
                                 activity: activity,
-                                isActive: manager.currentTimeBlock?.activityID == activity.id,
-                                action: {
+                                isActive: manager.currentTimeBlock?.activityID == activity.id && !isCurrentlyPaused
+                            ) {
+                                if isCurrentlyPaused {
+                                    // If currently paused, resume with this activity
+                                    manager.resumeFromPause(activity)
+                                } else {
+                                    // Normal activity start
                                     manager.startActivity(activity)
                                 }
-                            )
+                            }
                         }
                     }
-                    .padding()
+                    .padding(.horizontal)
+                }
+                .padding(.top)
+            }
+            .navigationTitle("Track")
+            .onReceive(timer) { _ in
+                if manager.currentTimeBlock != nil {
+                    manager.objectWillChange.send()
                 }
             }
-            .navigationTitle("Cadence")
-            .onAppear {
-                startTimer()
-            }
-            .onDisappear {
-                stopTimer()
-            }
         }
-    }
-    
-    private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
-            currentTime = Date()
-        }
-    }
-    
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
     }
 }
 
+// MARK: - Current Activity Card
 struct CurrentActivityCard: View {
-    let manager: TimeTrackingManager
-    let currentTime: Date
-    
-    var currentDuration: TimeInterval {
-        guard let block = manager.currentTimeBlock else { return 0 }
-        return block.duration
-    }
-    
-    var isInBackground: Bool {
-        manager.backgroundEnteredTime != nil
-    }
-    
-    var backgroundDuration: TimeInterval {
-        guard let backgroundTime = manager.backgroundEnteredTime else { return 0 }
-        return currentTime.timeIntervalSince(backgroundTime)
-    }
+    let block: TimeBlock?
+    let isPaused: Bool
+    let onPause: () -> Void
+    let onStop: () -> Void
+    let onResume: () -> Void
     
     var body: some View {
         VStack(spacing: 16) {
-            if let block = manager.currentTimeBlock {
-                // Active activity
-                HStack {
-                    Circle()
-                        .fill(Color(hex: block.activityColor))
-                        .frame(width: 12, height: 12)
-                    
-                    Text(block.activityName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    
-                    Spacer()
-                }
-                
-                // Duration display
-                Text(currentDuration.detailedFormattedDuration)
-                    .font(.system(size: 48, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                
-                // Background indicator
-                if isInBackground {
+            if let block = block {
+                VStack(spacing: 12) {
+                    // Activity name and duration
                     HStack {
-                        Image(systemName: "moon.fill")
-                            .foregroundStyle(.purple)
-                        Text("Tracking in background for \(backgroundDuration.formattedDuration)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        Circle()
+                            .fill(Color(hex: block.activityColor))
+                            .frame(width: 16, height: 16)
+                        
+                        Text(block.displayName)
+                            .font(.title2)
+                            .fontWeight(.semibold)
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(Color.purple.opacity(0.1))
-                    .cornerRadius(8)
+                    
+                    Text(block.duration.detailedFormattedDuration)
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    
+                    // Show pause/gap indicator
+                    if isPaused {
+                        HStack {
+                            Image(systemName: "pause.circle.fill")
+                                .foregroundStyle(.orange)
+                            Text("Paused")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color.orange.opacity(0.1))
+                        .cornerRadius(8)
+                    } else if block.isGap {
+                        HStack {
+                            Image(systemName: "timer")
+                                .foregroundStyle(.gray)
+                            Text("Not tracking")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color.gray.opacity(0.1))
+                        .cornerRadius(8)
+                    }
+                    
+                    // Elapsed time since start
+                    Text("Since \(block.startTime, style: .time)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
                 // Control buttons
                 HStack(spacing: 20) {
-                    if block.isPaused {
-                        Button(action: {
-                            manager.resumeCurrentActivity()
-                        }) {
+                    if isPaused {
+                        // Resume button
+                        Button(action: onResume) {
                             Label("Resume", systemImage: "play.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
-                    } else {
-                        Button(action: {
-                            manager.pauseCurrentActivity()
-                        }) {
+                    } else if !block.isGap {
+                        // Regular activity controls
+                        Button(action: onPause) {
                             Label("Pause", systemImage: "pause.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
-                    }
-                    
-                    Button(action: {
-                        manager.stopCurrentActivity()
-                    }) {
-                        Label("Stop", systemImage: "stop.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                }
-                
-                if block.isPaused {
-                    HStack {
-                        Image(systemName: "pause.circle.fill")
-                            .foregroundStyle(.orange)
-                        Text("Paused")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                        
+                        Button(action: onStop) {
+                            Label("Stop", systemImage: "stop.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.red)
                     }
                 }
                 
@@ -213,9 +217,11 @@ struct CurrentActivityCard: View {
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(16)
+        .padding(.horizontal)
     }
 }
 
+// MARK: - Activity Button
 struct ActivityButton: View {
     let activity: Activity
     let isActive: Bool
@@ -252,6 +258,7 @@ struct ActivityButton: View {
     }
 }
 
+// MARK: - Activity Set Picker
 struct ActivitySetPicker: View {
     let sets: [ActivitySet]
     @Environment(\.modelContext) private var modelContext
@@ -269,6 +276,7 @@ struct ActivitySetPicker: View {
             }
             .pickerStyle(.segmented)
         }
+        .padding(.horizontal)
         .padding(.bottom, 8)
     }
     

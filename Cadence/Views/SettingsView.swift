@@ -5,34 +5,20 @@ import UserNotifications
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     
-    @State private var showingBackgroundSettings = false
+    // State variables for day boundaries
+    @State private var startHour: Int = 6
+    @State private var endHour: Int = 23
+    @State private var manager: TimeTrackingManager?
     
     var body: some View {
         NavigationStack {
-            List {
-                // Background Tracking Section
-                Section {
-                    NavigationLink {
-                        BackgroundSettingsView()
-                    } label: {
-                        HStack {
-                            Image(systemName: "clock.badge")
-                                .foregroundStyle(.blue)
-                            Text("Background Tracking")
-                        }
-                    }
-                } header: {
-                    Text("Tracking Settings")
-                } footer: {
-                    Text("Configure how long activities continue tracking when app is in background")
-                }
-                
-                // About Section
+            Form {
+                // Version Info
                 Section {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.2.0")
+                        Text("1.0.0")
                             .foregroundStyle(.secondary)
                     }
                     
@@ -44,6 +30,42 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("About")
+                }
+                
+                // Day Boundaries Section
+                Section {
+                    Picker("Start of Day", selection: $startHour) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            Text(formatHour(hour)).tag(hour)
+                        }
+                    }
+                    
+                    Picker("End of Day", selection: $endHour) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            Text(formatHour(hour)).tag(hour)
+                        }
+                    }
+                } header: {
+                    Text("Day Boundaries")
+                } footer: {
+                    Text("These times define your tracking day for reports. Activities outside these hours are tracked but grouped separately.")
+                }
+                .onChange(of: startHour) { _, newValue in
+                    manager?.saveDayBoundaries(start: newValue, end: endHour)
+                }
+                .onChange(of: endHour) { _, newValue in
+                    manager?.saveDayBoundaries(start: startHour, end: newValue)
+                }
+                
+                // Background Tracking
+                Section {
+                    NavigationLink {
+                        BackgroundSettingsView()
+                    } label: {
+                        Label("Background Tracking", systemImage: "moon.fill")
+                    }
+                } header: {
+                    Text("Tracking")
                 }
                 
                 // Info Section
@@ -62,7 +84,23 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .onAppear {
+                manager = TimeTrackingManager(modelContext: modelContext)
+                startHour = manager?.startOfDayHour ?? 6
+                endHour = manager?.endOfDayHour ?? 23
+            }
         }
+    }
+    
+    // Helper function to format hour
+    private func formatHour(_ hour: Int) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "ha"
+        let calendar = Calendar.current
+        guard let date = calendar.date(from: DateComponents(hour: hour)) else {
+            return "\(hour):00"
+        }
+        return formatter.string(from: date)
     }
 }
 
@@ -70,7 +108,7 @@ struct SettingsView: View {
 struct BackgroundSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var selectedDuration: TimeInterval = 3600
+    @State private var selectedDuration: TimeInterval = 900
     @State private var notificationsEnabled = false
     @State private var showingPermissionAlert = false
     
@@ -116,7 +154,11 @@ struct BackgroundSettingsView: View {
                 Toggle("Reminder Notifications", isOn: $notificationsEnabled)
                     .onChange(of: notificationsEnabled) { _, newValue in
                         if newValue {
-                            requestNotificationPermission()
+                            // User wants to enable - check system permission first
+                            checkAndRequestNotificationPermission()
+                        } else {
+                            // User wants to disable - just save preference
+                            timeTrackingManager?.notificationsEnabled = false
                         }
                     }
                 
@@ -132,7 +174,7 @@ struct BackgroundSettingsView: View {
             } header: {
                 Text("Notifications")
             } footer: {
-                Text("Get notified before your activity stops in background")
+                Text("Get notified before your activity stops in background and when activity sets change")
             }
             
             Section {
@@ -160,7 +202,12 @@ struct BackgroundSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             timeTrackingManager = TimeTrackingManager(modelContext: modelContext)
-            selectedDuration = timeTrackingManager?.maxBackgroundDuration ?? 3600
+            selectedDuration = timeTrackingManager?.maxBackgroundDuration ?? 900
+            
+            // Load saved notification preference
+            notificationsEnabled = timeTrackingManager?.notificationsEnabled ?? true
+            
+            // Also check system permission status
             checkNotificationPermission()
         }
         .alert("Notifications Disabled", isPresented: $showingPermissionAlert) {
@@ -171,9 +218,42 @@ struct BackgroundSettingsView: View {
             }
             Button("Cancel", role: .cancel) {
                 notificationsEnabled = false
+                timeTrackingManager?.notificationsEnabled = false
             }
         } message: {
             Text("Please enable notifications in Settings to receive activity reminders")
+        }
+    }
+    
+    private func checkAndRequestNotificationPermission() {
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                switch settings.authorizationStatus {
+                case .authorized:
+                    // Already authorized - just save preference
+                    notificationsEnabled = true
+                    timeTrackingManager?.notificationsEnabled = true
+                    
+                case .notDetermined:
+                    // Request permission
+                    requestNotificationPermission()
+                    
+                case .denied:
+                    // Show alert to open Settings
+                    notificationsEnabled = false
+                    timeTrackingManager?.notificationsEnabled = false
+                    showingPermissionAlert = true
+                    
+                case .provisional, .ephemeral:
+                    // Treat as authorized
+                    notificationsEnabled = true
+                    timeTrackingManager?.notificationsEnabled = true
+                    
+                @unknown default:
+                    notificationsEnabled = false
+                    timeTrackingManager?.notificationsEnabled = false
+                }
+            }
         }
     }
     
@@ -182,8 +262,10 @@ struct BackgroundSettingsView: View {
             DispatchQueue.main.async {
                 if granted {
                     notificationsEnabled = true
+                    timeTrackingManager?.notificationsEnabled = true
                 } else {
                     notificationsEnabled = false
+                    timeTrackingManager?.notificationsEnabled = false
                     showingPermissionAlert = true
                 }
             }
@@ -193,12 +275,15 @@ struct BackgroundSettingsView: View {
     private func checkNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
-                notificationsEnabled = settings.authorizationStatus == .authorized
+                // If system permission is denied, override user preference
+                if settings.authorizationStatus == .denied {
+                    notificationsEnabled = false
+                    timeTrackingManager?.notificationsEnabled = false
+                }
             }
         }
     }
 }
-
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
     let container = try! ModelContainer(for: Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self, configurations: config)

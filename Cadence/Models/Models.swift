@@ -112,42 +112,95 @@ final class TimeBlockRule {
 @Model
 final class TimeBlock {
     var id: UUID
-    var activityID: UUID
-    var activityName: String // Denormalized for easier queries
-    var activityColor: String // Denormalized
-    var startTime: Date
+    var activityID: UUID?  // nil if Gap or Pause
+    var activityName: String
+    var activityColor: String
+    var activitySetID: UUID?
+    
+    var startTime: Date  // IMMUTABLE in UI
     var endTime: Date?
+    
     var isPaused: Bool
     var pauseStartTime: Date?
-    var totalPauseDuration: TimeInterval // In seconds
-    var switchCount: Int // Number of times activity was resumed (measures fragmentation)
-    var remarks: String // User-added notes
+    var totalPauseDuration: TimeInterval
     
-    init(activityID: UUID, activityName: String, activityColor: String, startTime: Date) {
+    var stopState: String  // "switched", "stopped", "paused", "ongoing"
+    var switchCount: Int
+    var remarks: String
+    var blockType: String  // "activity", "gap", "pause"
+    
+    init(activityID: UUID?, activityName: String, activityColor: String, activitySetID: UUID?, startTime: Date, blockType: String = "activity") {
         self.id = UUID()
         self.activityID = activityID
         self.activityName = activityName
         self.activityColor = activityColor
+        self.activitySetID = activitySetID
         self.startTime = startTime
         self.endTime = nil
         self.isPaused = false
         self.pauseStartTime = nil
         self.totalPauseDuration = 0
+        self.stopState = "ongoing"
         self.switchCount = 0
         self.remarks = ""
+        self.blockType = blockType
+    }
+    
+    convenience init(activity: Activity, startTime: Date) {
+        self.init(
+            activityID: activity.id,
+            activityName: activity.name,
+            activityColor: activity.color,
+            activitySetID: activity.setID,
+            startTime: startTime,
+            blockType: "activity"
+        )
+    }
+    
+    static func createGap(startTime: Date, endTime: Date? = nil) -> TimeBlock {
+        let gap = TimeBlock(
+            activityID: nil,
+            activityName: "Gap",
+            activityColor: "#9E9E9E",
+            activitySetID: nil,
+            startTime: startTime,
+            blockType: "gap"
+        )
+        gap.endTime = endTime
+        return gap
+    }
+    
+    static func createPause(startTime: Date, endTime: Date? = nil) -> TimeBlock {
+        let pause = TimeBlock(
+            activityID: nil,
+            activityName: "Pause",
+            activityColor: "#FF9800",
+            activitySetID: nil,
+            startTime: startTime,
+            blockType: "pause"
+        )
+        pause.endTime = endTime
+        return pause
     }
     
     var duration: TimeInterval {
         guard let end = endTime else {
-            // Activity is still running
             let currentDuration = Date().timeIntervalSince(startTime)
             return currentDuration - totalPauseDuration - (isPaused ? Date().timeIntervalSince(pauseStartTime ?? Date()) : 0)
         }
         return end.timeIntervalSince(startTime) - totalPauseDuration
     }
     
-    var isActive: Bool {
-        endTime == nil && !isPaused
+    var isActive: Bool { endTime == nil && !isPaused }
+    var isGap: Bool { blockType == "gap" }
+    var isPauseBlock: Bool { blockType == "pause" }
+    var isRegularActivity: Bool { blockType == "activity" }
+    
+    var displayName: String {
+        if isPauseBlock && switchCount > 0 {
+            return "Pause (\(switchCount)x)"
+        }
+        return activityName
     }
 }
 

@@ -152,41 +152,41 @@ struct TimeBlockRow: View {
 }
 
 #Preview {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Activity.self, ActivitySet.self, TimeBlock.self, configurations: config)
-    let context = container.mainContext
+    let preview = {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        let container = try! ModelContainer(for: Activity.self, ActivitySet.self, TimeBlock.self, configurations: config)
+        let context = container.mainContext
+        
+        // Create a set first
+        let workSet = ActivitySet(name: "Work", isActive: true)
+        context.insert(workSet)
+        
+        // Create preview data
+        let block1 = TimeBlock(
+            activityID: UUID(),
+            activityName: "Deep Work",
+            activityColor: "#4CAF50",
+            activitySetID: workSet.id,
+            startTime: Date().addingTimeInterval(-7200)
+        )
+        block1.endTime = Date().addingTimeInterval(-3600)
+        context.insert(block1)
+        
+        let block2 = TimeBlock(
+            activityID: UUID(),
+            activityName: "Email",
+            activityColor: "#FF9800",
+            activitySetID: workSet.id,
+            startTime: Date().addingTimeInterval(-3600)
+        )
+        block2.endTime = Date().addingTimeInterval(-1800)
+        context.insert(block2)
+        
+        let manager = TimeTrackingManager(modelContext: context)
+        
+        return StatsView(manager: manager)
+            .modelContainer(container)
+    }()
     
-    // Create preview data
-    let block1 = TimeBlock(
-        activityID: UUID(),
-        activityName: "Deep Work",
-        activityColor: "#4CAF50",
-        startTime: Date().addingTimeInterval(-3600)
-    )
-    block1.endTime = Date().addingTimeInterval(-1800)
-    block1.switchCount = 2
-    
-    let block2 = TimeBlock(
-        activityID: UUID(),
-        activityName: "Email",
-        activityColor: "#FF9800",
-        startTime: Date().addingTimeInterval(-1800)
-    )
-    block2.endTime = Date().addingTimeInterval(-900)
-    
-    let block3 = TimeBlock(
-        activityID: UUID(),
-        activityName: "Meetings",
-        activityColor: "#2196F3",
-        startTime: Date().addingTimeInterval(-900)
-    )
-    
-    context.insert(block1)
-    context.insert(block2)
-    context.insert(block3)
-    
-    let manager = TimeTrackingManager(modelContext: context)
-    
-    return TimelineView(manager: manager)
-        .modelContainer(container)
+    return preview
 }
