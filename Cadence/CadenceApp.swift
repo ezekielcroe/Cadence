@@ -6,6 +6,9 @@ import UserNotifications
 struct CadenceApp: App {
     let modelContainer: ModelContainer
     
+    // 1. Listen for the theme setting
+    @AppStorage("appTheme") private var appTheme: AppTheme = .system
+    
     init() {
         do {
             // Configure SwiftData model container
@@ -13,7 +16,7 @@ struct CadenceApp: App {
                 Activity.self,
                 ActivitySet.self,
                 TimeBlock.self,
-                TimeBlockRule.self  // NEW: Time block rules for auto-switching
+                TimeBlockRule.self
             ])
             
             let modelConfiguration = ModelConfiguration(
@@ -41,6 +44,8 @@ struct CadenceApp: App {
         WindowGroup {
             ContentView()
                 .modelContainer(modelContainer)
+                // 2. Apply the theme to the entire window
+                .preferredColorScheme(appTheme.colorScheme)
         }
     }
     
@@ -56,80 +61,96 @@ struct CadenceApp: App {
             // Create default sets
             let workSet = ActivitySet(name: "Work", isActive: true)
             let personalSet = ActivitySet(name: "Personal", isActive: false)
+            let weekendSet = ActivitySet(name: "Weekend", isActive: false)
             
             context.insert(workSet)
             context.insert(personalSet)
+            context.insert(weekendSet)
             
-            // Create some default activities for Work set
-            let defaultWorkActivities = [
-                ("Deep Work", "#4CAF50"),
-                ("Meetings", "#2196F3"),
-                ("Email", "#FF9800"),
-                ("Planning", "#9C27B0"),
-                ("Break", "#607D8B")
+            // MARK: - Work Activities (12 items)
+            let defaultWorkActivities: [(name: String, color: String, emoji: String)] = [
+                ("Focused Work", "#4CAF50", "🎯"),
+                ("Meetings", "#2196F3", "👥"),
+                ("Calls", "#03A9F4", "📞"),
+                ("Email", "#FF9800", "📧"),
+                ("Messaging", "#FFC107", "💬"),
+                ("Admin", "#9E9E9E", "📋"),
+                ("Planning", "#9C27B0", "📝"),
+                ("Research", "#673AB7", "🔍"),
+                ("Learning", "#3F51B5", "📚"),
+                ("Lunch", "#8BC34A", "🍽️"),
+                ("Break", "#795548", "☕"),
+                ("Commute", "#607D8B", "🚗"),
             ]
             
-            for (index, (name, color)) in defaultWorkActivities.enumerated() {
-                let activity = Activity(
-                    name: name,
-                    color: color,
-                    setID: workSet.id,
-                    sortOrder: index
-                )
-                context.insert(activity)
+            for (index, activity) in defaultWorkActivities.enumerated() {
+                context.insert(Activity(name: activity.name, color: activity.color, setID: workSet.id, sortOrder: index, emoji: activity.emoji))
             }
             
-            // Create some default activities for Personal set
-            let defaultPersonalActivities = [
-                ("Exercise", "#F44336"),
-                ("Reading", "#3F51B5"),
-                ("Family Time", "#E91E63"),
-                ("Hobbies", "#00BCD4"),
-                ("Rest", "#795548")
+            // MARK: - Personal Activities
+            let defaultPersonalActivities: [(name: String, color: String, emoji: String)] = [
+                ("Sleep", "#3F51B5", "😴"),
+                ("Exercise", "#F44336", "💪"),
+                ("Self-Care", "#E91E63", "🧘"),
+                ("Eating", "#FF9800", "🍽️"),
+                ("Cooking", "#FF5722", "👨‍🍳"),
+                ("Family", "#E91E63", "👨‍👩‍👧"),
+                ("Socializing", "#9C27B0", "🎉"),
+                ("Chores", "#607D8B", "🧹"),
+                ("Travel", "#9E9E9E", "🚶"),
+                ("Entertainment", "#673AB7", "📺"),
+                ("Hobbies", "#009688", "🎨"),
+                ("Downtime", "#795548", "🛋️"),
             ]
             
-            for (index, (name, color)) in defaultPersonalActivities.enumerated() {
-                let activity = Activity(
-                    name: name,
-                    color: color,
-                    setID: personalSet.id,
-                    sortOrder: index
-                )
-                context.insert(activity)
+            for (index, activity) in defaultPersonalActivities.enumerated() {
+                context.insert(Activity(name: activity.name, color: activity.color, setID: personalSet.id, sortOrder: index, emoji: activity.emoji))
             }
             
-            // Create example time block rules
+            // MARK: - Weekend Activities
+            let defaultWeekendActivities: [(name: String, color: String, emoji: String)] = [
+                ("Sleep", "#3F51B5", "😴"),
+                ("Eating", "#FF9800", "🍽️"),
+                ("Cooking", "#FF5722", "👨‍🍳"),
+                ("Exercise", "#F44336", "💪"),
+                ("Outdoors", "#4CAF50", "🌳"),
+                ("Family", "#E91E63", "👨‍👩‍👧"),
+                ("Socializing", "#9C27B0", "🍻"),
+                ("Chores", "#607D8B", "🧹"),
+                ("Errands", "#8BC34A", "🛒"),
+                ("Travel", "#9E9E9E", "🚗"),
+                ("Entertainment", "#673AB7", "📺"),
+                ("Hobbies", "#009688", "🎨"),
+            ]
+            
+            for (index, activity) in defaultWeekendActivities.enumerated() {
+                context.insert(Activity(name: activity.name, color: activity.color, setID: weekendSet.id, sortOrder: index, emoji: activity.emoji))
+            }
+            
+            // MARK: - Time Block Rules
             let calendar = Calendar.current
+            
+            // Default Rules Setup...
             let workStart = calendar.date(from: DateComponents(hour: 9, minute: 0))!
-            let workEnd = calendar.date(from: DateComponents(hour: 17, minute: 0))!
+            let workEnd = calendar.date(from: DateComponents(hour: 18, minute: 0))!
             let eveningStart = calendar.date(from: DateComponents(hour: 18, minute: 0))!
             let eveningEnd = calendar.date(from: DateComponents(hour: 23, minute: 0))!
+            let weekendDayStart = calendar.date(from: DateComponents(hour: 9, minute: 0))!
+            let weekendDayEnd = calendar.date(from: DateComponents(hour: 18, minute: 0))!
+            let morningStart = calendar.date(from: DateComponents(hour: 6, minute: 0))!
+            let morningEnd = calendar.date(from: DateComponents(hour: 9, minute: 0))!
             
-            let workHours = TimeBlockRule(
-                name: "Work Hours",
-                startTime: workStart,
-                endTime: workEnd,
-                linkedSetID: workSet.id,
-                daysOfWeek: [2, 3, 4, 5, 6] // Monday to Friday
-            )
-            
-            let eveningTime = TimeBlockRule(
-                name: "Evening",
-                startTime: eveningStart,
-                endTime: eveningEnd,
-                linkedSetID: personalSet.id,
-                daysOfWeek: [] // All days
-            )
-            
-            context.insert(workHours)
-            context.insert(eveningTime)
+            context.insert(TimeBlockRule(name: "Work Hours", startTime: workStart, endTime: workEnd, linkedSetID: workSet.id, daysOfWeek: [2, 3, 4, 5, 6], trackingMode: .strict))
+            context.insert(TimeBlockRule(name: "Evening", startTime: eveningStart, endTime: eveningEnd, linkedSetID: personalSet.id, daysOfWeek: [], trackingMode: .relaxed))
+            context.insert(TimeBlockRule(name: "Weekend Day", startTime: weekendDayStart, endTime: weekendDayEnd, linkedSetID: weekendSet.id, daysOfWeek: [1, 7], trackingMode: .relaxed))
+            context.insert(TimeBlockRule(name: "Morning Routine", startTime: morningStart, endTime: morningEnd, linkedSetID: personalSet.id, daysOfWeek: [], trackingMode: .relaxed))
             
             try? context.save()
         }
     }
     
     private func requestNotificationPermissions() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, error in
             if let error = error {
                 print("Notification permission error: \(error)")
             }

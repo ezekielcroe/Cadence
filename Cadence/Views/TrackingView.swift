@@ -10,6 +10,7 @@ struct TrackingView: View {
     @Query private var activities: [Activity]
     
     @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var showingQuickRemark = false
     
     var activeSet: ActivitySet? {
         activitySets.first { $0.isActive }
@@ -47,61 +48,67 @@ struct TrackingView: View {
     }
     
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    // Activity Set Picker
-                    if activitySets.count > 1 {
-                        ActivitySetPicker(sets: activitySets)
+        ScrollView {
+            VStack(spacing: 20) {
+                // Current Activity Display
+                CurrentActivityCard(
+                    block: manager.currentTimeBlock,
+                    isPaused: isCurrentlyPaused,
+                    onPause: {
+                        manager.pauseCurrentActivity()
+                    },
+                    onStop: {
+                        manager.stopCurrentActivity()
+                    },
+                    onResume: {
+                        if let activity = lastActivityBeforePause {
+                            manager.resumeFromPause(activity)
+                        }
+                    },
+                    onQuickRemark: {
+                        showingQuickRemark = true
                     }
-                    
-                    // Current Activity Display
-                    CurrentActivityCard(
-                        block: manager.currentTimeBlock,
-                        isPaused: isCurrentlyPaused,
-                        onPause: {
-                            manager.pauseCurrentActivity()
-                        },
-                        onStop: {
-                            manager.stopCurrentActivity()
-                        },
-                        onResume: {
-                            if let activity = lastActivityBeforePause {
+                )
+                
+                // Activity Set Picker - moved below current activity
+                if activitySets.count > 1 {
+                    ActivitySetPicker(sets: activitySets)
+                        .padding(.horizontal)
+                }
+                
+                // Activity Buttons Grid
+                LazyVGrid(columns: [
+                    GridItem(.flexible()),
+                    GridItem(.flexible()),
+                    GridItem(.flexible())
+                ], spacing: 12) {
+                    ForEach(activeSetActivities) { activity in
+                        ActivityButton(
+                            activity: activity,
+                            isActive: manager.currentTimeBlock?.activityID == activity.id && !isCurrentlyPaused
+                        ) {
+                            if isCurrentlyPaused {
+                                // If currently paused, resume with this activity
                                 manager.resumeFromPause(activity)
-                            }
-                        }
-                    )
-                    
-                    // Activity Buttons Grid
-                    LazyVGrid(columns: [
-                        GridItem(.flexible()),
-                        GridItem(.flexible()),
-                        GridItem(.flexible())
-                    ], spacing: 12) {
-                        ForEach(activeSetActivities) { activity in
-                            ActivityButton(
-                                activity: activity,
-                                isActive: manager.currentTimeBlock?.activityID == activity.id && !isCurrentlyPaused
-                            ) {
-                                if isCurrentlyPaused {
-                                    // If currently paused, resume with this activity
-                                    manager.resumeFromPause(activity)
-                                } else {
-                                    // Normal activity start
-                                    manager.startActivity(activity)
-                                }
+                            } else {
+                                // Normal activity start
+                                manager.startActivity(activity)
                             }
                         }
                     }
-                    .padding(.horizontal)
                 }
-                .padding(.top)
+                .padding(.horizontal)
             }
-            .navigationTitle("Track")
-            .onReceive(timer) { _ in
-                if manager.currentTimeBlock != nil {
-                    manager.objectWillChange.send()
-                }
+            .padding(.top)
+        }
+        .onReceive(timer) { _ in
+            if manager.currentTimeBlock != nil {
+                manager.objectWillChange.send()
+            }
+        }
+        .sheet(isPresented: $showingQuickRemark) {
+            if let block = manager.currentTimeBlock {
+                QuickRemarkSheet(timeBlock: block)
             }
         }
     }
@@ -114,6 +121,7 @@ struct CurrentActivityCard: View {
     let onPause: () -> Void
     let onStop: () -> Void
     let onResume: () -> Void
+    let onQuickRemark: () -> Void
     
     var body: some View {
         VStack(spacing: 16) {
@@ -162,6 +170,29 @@ struct CurrentActivityCard: View {
                         .cornerRadius(8)
                     }
                     
+                    // Show existing remarks preview if any
+                    if !block.remarks.isEmpty {
+                        Button(action: onQuickRemark) {
+                            HStack {
+                                Image(systemName: "note.text")
+                                    .font(.caption)
+                                Text(block.remarks.split(separator: "\n").last ?? "")
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.1))
+                            .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    
                     // Elapsed time since start
                     Text("Since \(block.startTime, style: .time)")
                         .font(.caption)
@@ -169,29 +200,41 @@ struct CurrentActivityCard: View {
                 }
                 
                 // Control buttons
-                HStack(spacing: 20) {
-                    if isPaused {
-                        // Resume button
-                        Button(action: onResume) {
-                            Label("Resume", systemImage: "play.fill")
-                                .frame(maxWidth: .infinity)
+                VStack(spacing: 12) {
+                    HStack(spacing: 20) {
+                        if isPaused {
+                            // Resume button
+                            Button(action: onResume) {
+                                Label("Resume", systemImage: "play.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.green)
+                        } else if !block.isGap {
+                            // Regular activity controls
+                            Button(action: onPause) {
+                                Label("Pause", systemImage: "pause.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            
+                            Button(action: onStop) {
+                                Label("Stop", systemImage: "stop.fill")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green)
-                    } else if !block.isGap {
-                        // Regular activity controls
-                        Button(action: onPause) {
-                            Label("Pause", systemImage: "pause.fill")
+                    }
+                    
+                    // Quick Remark button - only show for active activities (not gaps or paused)
+                    if !block.isGap && !isPaused {
+                        Button(action: onQuickRemark) {
+                            Label("Quick Remark", systemImage: "note.text.badge.plus")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
-                        
-                        Button(action: onStop) {
-                            Label("Stop", systemImage: "stop.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
+                        .tint(.blue)
                     }
                 }
                 
@@ -221,22 +264,35 @@ struct CurrentActivityCard: View {
     }
 }
 
-// MARK: - Activity Button
+// MARK: - Activity Button (Updated with Emoji Support and Haptics)
 struct ActivityButton: View {
     let activity: Activity
     let isActive: Bool
     let action: () -> Void
     
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            // Haptic feedback on tap
+            let intensity = UserDefaults.standard.double(forKey: "hapticIntensity")
+            HapticManager.shared.impact(style: .medium, intensity: intensity > 0 ? intensity : 1.0)
+            action()
+        }) {
             VStack(spacing: 8) {
-                Circle()
-                    .fill(Color(hex: activity.color))
-                    .frame(width: 40, height: 40)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: isActive ? 3 : 0)
-                    )
+                ZStack {
+                    Circle()
+                        .fill(Color(hex: activity.color))
+                        .frame(width: 40, height: 40)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: isActive ? 3 : 0)
+                        )
+                    
+                    // Display emoji if available
+                    if let emoji = activity.emoji {
+                        Text(emoji)
+                            .font(.system(size: 22))
+                    }
+                }
                 
                 Text(activity.name)
                     .font(.subheadline)
@@ -258,38 +314,191 @@ struct ActivityButton: View {
     }
 }
 
-// MARK: - Activity Set Picker
+// MARK: - Activity Set Picker (Dropdown Style)
 struct ActivitySetPicker: View {
     let sets: [ActivitySet]
     @Environment(\.modelContext) private var modelContext
     
-    var body: some View {
-        HStack {
-            Text("Activity Set:")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            
-            Picker("Set", selection: binding) {
-                ForEach(sets) { set in
-                    Text(set.name).tag(set.id)
-                }
-            }
-            .pickerStyle(.segmented)
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 8)
+    var activeSet: ActivitySet? {
+        sets.first(where: { $0.isActive })
     }
     
-    private var binding: Binding<UUID> {
-        Binding(
-            get: { sets.first(where: { $0.isActive })?.id ?? sets.first?.id ?? UUID() },
-            set: { newID in
-                for set in sets {
-                    set.isActive = (set.id == newID)
+    var body: some View {
+        Menu {
+            ForEach(sets) { set in
+                Button {
+                    selectSet(set)
+                } label: {
+                    HStack {
+                        Text(set.name)
+                        if set.isActive {
+                            Image(systemName: "checkmark")
+                        }
+                    }
                 }
-                try? modelContext.save()
             }
-        )
+        } label: {
+            HStack {
+                Text(activeSet?.name ?? "Select Set")
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(Color(.systemGray6))
+            .cornerRadius(10)
+        }
+    }
+    
+    private func selectSet(_ set: ActivitySet) {
+        for s in sets {
+            s.isActive = (s.id == set.id)
+        }
+        try? modelContext.save()
+    }
+}
+
+// MARK: - Quick Remark Sheet
+struct QuickRemarkSheet: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+    
+    @Bindable var timeBlock: TimeBlock
+    @State private var newRemark = ""
+    @FocusState private var isTextFieldFocused: Bool
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                // Current activity info
+                VStack(spacing: 8) {
+                    HStack {
+                        Circle()
+                            .fill(Color(hex: timeBlock.activityColor))
+                            .frame(width: 12, height: 12)
+                        
+                        Text(timeBlock.displayName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        
+                        Spacer()
+                        
+                        Text(timeBlock.duration.formattedDuration)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(12)
+                }
+                
+                // Input field
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Add Quick Remark")
+                        .font(.headline)
+                    
+                    TextField("Type your note...", text: $newRemark, axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .focused($isTextFieldFocused)
+                        .lineLimit(3...6)
+                        .onSubmit {
+                            // Submit on Enter/Return key
+                            if !newRemark.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                addRemark()
+                            }
+                        }
+                        .submitLabel(.done)
+                }
+                
+                // Existing remarks preview
+                if !timeBlock.remarks.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Previous Remarks")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        ScrollView {
+                            Text(timeBlock.remarks)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                                .background(Color(.systemGray6))
+                                .cornerRadius(8)
+                        }
+                        .frame(maxHeight: 120)
+                    }
+                }
+                
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Quick Remark")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        addRemark()
+                    }
+                    .disabled(newRemark.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .fontWeight(.semibold)
+                }
+                
+                // Keyboard toolbar with Done button
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") {
+                        isTextFieldFocused = false
+                    }
+                }
+            }
+            .onAppear {
+                // Auto-focus the text field
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    isTextFieldFocused = true
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+    
+    private func addRemark() {
+        let trimmedRemark = newRemark.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRemark.isEmpty else { return }
+        
+        // Get current timestamp
+        let timestamp = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        let timeString = formatter.string(from: timestamp)
+        
+        // Format the new remark with timestamp
+        let formattedRemark = "[\(timeString)] \(trimmedRemark)"
+        
+        // Append to existing remarks with newline separator
+        if timeBlock.remarks.isEmpty {
+            timeBlock.remarks = formattedRemark
+        } else {
+            timeBlock.remarks += "\n" + formattedRemark
+        }
+        
+        // Save context
+        try? modelContext.save()
+        
+        dismiss()
     }
 }
 
@@ -302,8 +511,8 @@ struct ActivitySetPicker: View {
     let workSet = ActivitySet(name: "Work", isActive: true)
     context.insert(workSet)
     
-    let activity1 = Activity(name: "Deep Work", color: "#4CAF50", setID: workSet.id)
-    let activity2 = Activity(name: "Meetings", color: "#2196F3", setID: workSet.id, sortOrder: 1)
+    let activity1 = Activity(name: "Deep Work", color: "#4CAF50", setID: workSet.id, emoji: "💻")
+    let activity2 = Activity(name: "Meetings", color: "#2196F3", setID: workSet.id, sortOrder: 1, emoji: "👥")
     context.insert(activity1)
     context.insert(activity2)
     

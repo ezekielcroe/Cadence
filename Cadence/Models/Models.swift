@@ -1,19 +1,60 @@
 import Foundation
 import SwiftData
 
+// MARK: - Tracking Mode Enum
+enum TrackingMode: String, Codable, CaseIterable {
+    case strict = "strict"      // Track activities AND gaps, auto-switch sets
+    case relaxed = "relaxed"    // Track activities, NO gaps, auto-switch sets
+    case off = "off"            // Manual tracking only, no gaps, no auto-switch
+    
+    var displayName: String {
+        switch self {
+        case .strict: return "Strict"
+        case .relaxed: return "Relaxed"
+        case .off: return "Off"
+        }
+    }
+    
+    var description: String {
+        switch self {
+        case .strict: return "Track activities and gaps"
+        case .relaxed: return "Track activities, no gaps"
+        case .off: return "Manual only, no auto-switch"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .strict: return "clock.badge.checkmark"
+        case .relaxed: return "clock"
+        case .off: return "clock.badge.xmark"
+        }
+    }
+    
+    var tracksGaps: Bool {
+        self == .strict
+    }
+    
+    var autoSwitchesSets: Bool {
+        self != .off
+    }
+}
+
 // MARK: - Activity Model
 @Model
 final class Activity {
     var id: UUID
     var name: String
-    var color: String // Hex color string
-    var setID: UUID // Reference to which set this belongs to
+    var emoji: String?
+    var color: String
+    var setID: UUID
     var createdAt: Date
     var sortOrder: Int
     
-    init(name: String, color: String, setID: UUID, sortOrder: Int = 0) {
+    init(name: String, color: String, setID: UUID, sortOrder: Int = 0, emoji: String? = nil) {
         self.id = UUID()
         self.name = name
+        self.emoji = emoji
         self.color = color
         self.setID = setID
         self.createdAt = Date()
@@ -41,7 +82,7 @@ final class ActivitySet {
 @Model
 final class TimeBlockRule {
     var id: UUID
-    var name: String // e.g., "Work Hours", "Evening"
+    var name: String
     var startTime: Date // Time of day (only hour/minute matter)
     var endTime: Date // Time of day
     var linkedSetID: UUID? // Optional: which activity set to activate
@@ -49,7 +90,15 @@ final class TimeBlockRule {
     var daysOfWeek: [Int] // 1=Sunday, 2=Monday, etc. Empty = all days
     var createdAt: Date
     
-    init(name: String, startTime: Date, endTime: Date, linkedSetID: UUID? = nil, daysOfWeek: [Int] = []) {
+    // NEW: Tracking mode for this time block
+    var trackingModeRaw: String
+    
+    var trackingMode: TrackingMode {
+        get { TrackingMode(rawValue: trackingModeRaw) ?? .relaxed }
+        set { trackingModeRaw = newValue.rawValue }
+    }
+    
+    init(name: String, startTime: Date, endTime: Date, linkedSetID: UUID? = nil, daysOfWeek: [Int] = [], trackingMode: TrackingMode = .relaxed) {
         self.id = UUID()
         self.name = name
         self.startTime = startTime
@@ -58,6 +107,7 @@ final class TimeBlockRule {
         self.isEnabled = true
         self.daysOfWeek = daysOfWeek
         self.createdAt = Date()
+        self.trackingModeRaw = trackingMode.rawValue
     }
     
     // Check if this rule applies to the current time

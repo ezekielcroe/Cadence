@@ -3,7 +3,7 @@
 //  Cadence
 //
 //  Created by Zhi Zheng Yeo on 30/1/26.
-//
+//  Updated: Fixed merge/split logic - now allows splitting any activity
 
 
 import Foundation
@@ -13,38 +13,58 @@ import SwiftData
 class TimeBlockEditor {
     private var modelContext: ModelContext
     
+    // Threshold for "short" activities (5 minutes) - used for merge rules
+    static let shortActivityThreshold: TimeInterval = 300
+    
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
     
     // MARK: - Validation
     
+    /// Check if two blocks are truly adjacent (end time of first matches start time of second)
     func areAdjacent(_ block1: TimeBlock, _ block2: TimeBlock) -> Bool {
         guard let end1 = block1.endTime else { return false }
         let timeDiff = abs(end1.timeIntervalSince(block2.startTime))
-        return timeDiff < 1.0
+        return timeDiff < 1.0 // Within 1 second tolerance
     }
     
+    /// Check if a block can participate in a merge operation
+    /// Returns true for: gaps, pauses, or short activities (<5 min)
+    func canBlockParticipateInMerge(_ block: TimeBlock) -> Bool {
+        if block.isGap || block.isPauseBlock {
+            return true
+        }
+        // Short activity (< 5 minutes)
+        return block.duration < Self.shortActivityThreshold
+    }
+    
+    /// Check if a set of blocks can be merged
     func canMerge(_ blocks: [TimeBlock]) -> Bool {
         guard blocks.count >= 2 else { return false }
         
         let sorted = blocks.sorted { $0.startTime < $1.startTime }
         
+        // Check all blocks are adjacent
         for i in 0..<(sorted.count - 1) {
             if !areAdjacent(sorted[i], sorted[i + 1]) {
                 return false
             }
         }
         
-        let hasGapOrPause = sorted.contains { $0.isGap || $0.isPauseBlock }
-        let allSameActivity = Set(sorted.compactMap { $0.activityID }).count <= 1
+        // At least one block must be mergeable (gap, pause, or short activity)
+        let hasMergeableBlock = sorted.contains { canBlockParticipateInMerge($0) }
         
-        return hasGapOrPause || allSameActivity
+        return hasMergeableBlock
     }
     
+    /// Check if a block can be split
+    /// Now allows ANY completed block with ≥2 min duration to be split
     func canSplit(_ block: TimeBlock) -> Bool {
         guard let endTime = block.endTime else { return false }
         let duration = endTime.timeIntervalSince(block.startTime)
+        
+        // Must be at least 2 minutes
         return duration >= 120
     }
     
@@ -63,6 +83,7 @@ class TimeBlockEditor {
             throw TimeBlockEditorError.invalidBlocks
         }
         
+        // Create the merged block
         let mergedBlock: TimeBlock
         if let activity = targetActivity {
             mergedBlock = TimeBlock(activity: activity, startTime: firstBlock.startTime)
@@ -73,22 +94,29 @@ class TimeBlockEditor {
         mergedBlock.endTime = endTime
         mergedBlock.stopState = lastBlock.stopState
         
+        // Concatenate remarks with separator
         let allRemarks = sorted.compactMap { $0.remarks.isEmpty ? nil : $0.remarks }
         mergedBlock.remarks = allRemarks.joined(separator: "\n---\n")
         
+        // Sum up pause durations and switch counts
         mergedBlock.totalPauseDuration = sorted.reduce(0) { $0 + $1.totalPauseDuration }
         mergedBlock.switchCount = sorted.reduce(0) { $0 + $1.switchCount }
         
+        // Delete original blocks
         for block in sorted {
             modelContext.delete(block)
         }
         
+        // Insert merged block
         modelContext.insert(mergedBlock)
         try modelContext.save()
     }
     
     // MARK: - Split
     
+    /// Split a block at the given time
+    /// - For activities: both parts become the same activity
+    /// - For gaps/pauses: both parts remain as gaps/pauses
     func splitBlock(_ block: TimeBlock, at splitTime: Date) throws {
         guard canSplit(block) else {
             throw TimeBlockEditorError.cannotSplit
@@ -102,6 +130,7 @@ class TimeBlockEditor {
             throw TimeBlockEditorError.invalidSplitTime
         }
         
+        // Create first block (same type as original)
         let firstBlock: TimeBlock
         if let activityID = block.activityID {
             let descriptor = FetchDescriptor<Activity>(
@@ -122,11 +151,28 @@ class TimeBlockEditor {
         firstBlock.stopState = "switched"
         firstBlock.remarks = block.remarks
         
-        let secondBlock = TimeBlock.createGap(startTime: splitTime)
+        // Create second block (same type as original - NOT a gap anymore)
+        let secondBlock: TimeBlock
+        if let activityID = block.activityID {
+            let descriptor = FetchDescriptor<Activity>(
+                predicate: #Predicate { $0.id == activityID }
+            )
+            if let activity = try? modelContext.fetch(descriptor).first {
+                secondBlock = TimeBlock(activity: activity, startTime: splitTime)
+            } else {
+                throw TimeBlockEditorError.activityNotFound
+            }
+        } else if block.isGap {
+            secondBlock = TimeBlock.createGap(startTime: splitTime)
+        } else {
+            secondBlock = TimeBlock.createPause(startTime: splitTime)
+        }
+        
         secondBlock.endTime = endTime
         secondBlock.stopState = block.stopState
-        secondBlock.remarks = block.remarks
+        // Don't copy remarks to second block - they stay with first
         
+        // Delete original and insert new blocks
         modelContext.delete(block)
         modelContext.insert(firstBlock)
         modelContext.insert(secondBlock)
@@ -169,8 +215,23 @@ class TimeBlockEditor {
             return (nil, nil)
         }
         
-        let previous = currentIndex > 0 ? allBlocks[currentIndex - 1] : nil
-        let next = currentIndex < allBlocks.count - 1 ? allBlocks[currentIndex + 1] : nil
+        // Check for truly adjacent previous block
+        var previous: TimeBlock? = nil
+        if currentIndex > 0 {
+            let prev = allBlocks[currentIndex - 1]
+            if areAdjacent(prev, block) {
+                previous = prev
+            }
+        }
+        
+        // Check for truly adjacent next block
+        var next: TimeBlock? = nil
+        if currentIndex < allBlocks.count - 1 {
+            let nextBlock = allBlocks[currentIndex + 1]
+            if areAdjacent(block, nextBlock) {
+                next = nextBlock
+            }
+        }
         
         return (previous, next)
     }
@@ -182,15 +243,15 @@ enum TimeBlockEditorError: LocalizedError {
     
     var errorDescription: String? {
         switch self {
-        case .cannotMerge: return "Cannot merge these blocks."
-        case .cannotSplit: return "Cannot split this block."
+        case .cannotMerge: return "Cannot merge these blocks. Blocks must be adjacent and at least one must be a gap, pause, or short activity (<5 min)."
+        case .cannotSplit: return "Cannot split this block. Block must be completed and at least 2 minutes long."
         case .invalidBlocks: return "Invalid blocks selected."
         case .blockStillActive: return "Cannot split an active block."
         case .invalidSplitTime: return "Invalid split time."
-        case .blockTooLong: return "Block too long."
+        case .blockTooLong: return "Block is too long to modify."
         case .activityNotFound: return "Activity not found."
-        case .notAGap: return "Not a Gap or Pause."
-        case .alreadyGap: return "Already a Gap."
+        case .notAGap: return "Only gaps and pauses can be converted to activities."
+        case .alreadyGap: return "This block is already a gap."
         }
     }
 }

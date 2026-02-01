@@ -2,9 +2,6 @@
 //  SetsView.swift
 //  Cadence
 //
-//  Created by Zhi Zheng Yeo on 29/1/26.
-//
-
 
 import SwiftUI
 import SwiftData
@@ -49,7 +46,7 @@ struct SetsView: View {
                 } header: {
                     Text("Time Blocks")
                 } footer: {
-                    Text("Automatically switch activity sets based on time of day")
+                    Text("Control when gaps are tracked and auto-switch activity sets")
                 }
                 
                 // Activity Sets Section
@@ -150,11 +147,34 @@ struct TimeBlockRuleRow: View {
         return set.name
     }
     
+    var trackingModeColor: Color {
+        switch rule.trackingMode {
+        case .strict: return .red
+        case .relaxed: return .blue
+        case .off: return .gray
+        }
+    }
+    
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(rule.name)
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(rule.name)
+                        .font(.headline)
+                    
+                    // Tracking mode badge
+                    HStack(spacing: 2) {
+                        Image(systemName: rule.trackingMode.icon)
+                            .font(.caption2)
+                        Text(rule.trackingMode.displayName)
+                            .font(.caption2)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(trackingModeColor.opacity(0.15))
+                    .foregroundStyle(trackingModeColor)
+                    .cornerRadius(4)
+                }
                 
                 Text(rule.timeRangeDisplay)
                     .font(.subheadline)
@@ -165,7 +185,7 @@ struct TimeBlockRuleRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     
-                    if rule.linkedSetID != nil {
+                    if rule.linkedSetID != nil && rule.trackingMode != .off {
                         Text("→ \(linkedSetName)")
                             .font(.caption)
                             .foregroundStyle(.blue)
@@ -226,6 +246,11 @@ struct ActivitySetDetailView: View {
                         ActivityEditView(activity: activity)
                     } label: {
                         HStack {
+                            if let emoji = activity.emoji {
+                                Text(emoji)
+                                    .font(.title3)
+                            }
+                            
                             Circle()
                                 .fill(Color(hex: activity.color))
                                 .frame(width: 24, height: 24)
@@ -322,6 +347,7 @@ struct AddActivityView: View {
     let setID: UUID
     
     @State private var name = ""
+    @State private var emoji = ""
     @State private var selectedColor = "#4CAF50"
     
     let availableColors = [
@@ -335,7 +361,22 @@ struct AddActivityView: View {
     var body: some View {
         NavigationStack {
             Form {
-                TextField("Activity Name", text: $name)
+                Section {
+                    TextField("Emoji (optional)", text: $emoji)
+                        .onChange(of: emoji) { oldValue, newValue in
+                            // Limit to first emoji (emojis can be 1-2 characters)
+                            if newValue.count > 2 {
+                                emoji = String(newValue.prefix(2))
+                            }
+                        }
+                        .font(.system(size: 40))
+                        .multilineTextAlignment(.center)
+                    
+                    TextField("Activity Name", text: $name)
+                } footer: {
+                    Text("Tap 🌐 on keyboard to add emoji for easier identification")
+                        .foregroundStyle(.secondary)
+                }
                 
                 Section("Color") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {
@@ -384,7 +425,8 @@ struct AddActivityView: View {
             name: name,
             color: selectedColor,
             setID: setID,
-            sortOrder: existingCount
+            sortOrder: existingCount,
+            emoji: emoji.isEmpty ? nil : emoji
         )
         
         modelContext.insert(newActivity)
@@ -410,7 +452,22 @@ struct ActivityEditView: View {
     
     var body: some View {
         Form {
-            TextField("Activity Name", text: $activity.name)
+            Section {
+                TextField("Emoji (optional)", text: Binding(
+                    get: { activity.emoji ?? "" },
+                    set: { newValue in
+                        let trimmed = newValue.isEmpty ? nil : String(newValue.prefix(2))
+                        activity.emoji = trimmed
+                    }
+                ))
+                .font(.system(size: 40))
+                .multilineTextAlignment(.center)
+                
+                TextField("Activity Name", text: $activity.name)
+            } footer: {
+                Text("Tap 🌐 on keyboard to add emoji for easier identification")
+                    .foregroundStyle(.secondary)
+            }
             
             Section("Color") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {

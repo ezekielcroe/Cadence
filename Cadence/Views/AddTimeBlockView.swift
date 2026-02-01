@@ -2,9 +2,6 @@
 //  AddTimeBlockView.swift
 //  Cadence
 //
-//  Created by Zhi Zheng Yeo on 29/1/26.
-//
-
 
 import SwiftUI
 import SwiftData
@@ -21,6 +18,7 @@ struct AddTimeBlockView: View {
     @State private var endTime = Date()
     @State private var linkedSetID: UUID? = nil
     @State private var selectedDays: Set<Int> = []
+    @State private var trackingMode: TrackingMode = .relaxed
     
     let daysOfWeek = [
         (1, "Sun"), (2, "Mon"), (3, "Tue"), (4, "Wed"),
@@ -37,6 +35,21 @@ struct AddTimeBlockView: View {
                     DatePicker("End Time", selection: $endTime, displayedComponents: .hourAndMinute)
                 }
                 
+                // Tracking Mode
+                Section {
+                    Picker("Tracking Mode", selection: $trackingMode) {
+                        ForEach(TrackingMode.allCases, id: \.self) { mode in
+                            Label(mode.displayName, systemImage: mode.icon)
+                                .tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                } header: {
+                    Text("Tracking Mode")
+                } footer: {
+                    Text(trackingModeFooter)
+                }
+                
                 Section {
                     Picker("Link to Activity Set", selection: $linkedSetID) {
                         Text("None").tag(nil as UUID?)
@@ -47,7 +60,12 @@ struct AddTimeBlockView: View {
                 } header: {
                     Text("Auto-Switch")
                 } footer: {
-                    Text("When this time block starts, automatically switch to the selected activity set")
+                    if trackingMode == .off {
+                        Text("Auto-switch is disabled when tracking mode is Off")
+                            .foregroundStyle(.orange)
+                    } else {
+                        Text("When this time block starts, automatically switch to the selected activity set")
+                    }
                 }
                 
                 Section {
@@ -93,13 +111,25 @@ struct AddTimeBlockView: View {
         }
     }
     
+    private var trackingModeFooter: String {
+        switch trackingMode {
+        case .strict:
+            return "Track activities and gaps. Best for work hours."
+        case .relaxed:
+            return "Track activities but no gaps. Best for personal time."
+        case .off:
+            return "Manual tracking only. Best for sleep or downtime."
+        }
+    }
+    
     private func addTimeBlock() {
         let rule = TimeBlockRule(
             name: name,
             startTime: startTime,
             endTime: endTime,
-            linkedSetID: linkedSetID,
-            daysOfWeek: Array(selectedDays)
+            linkedSetID: trackingMode == .off ? nil : linkedSetID,
+            daysOfWeek: Array(selectedDays),
+            trackingMode: trackingMode
         )
         
         modelContext.insert(rule)
@@ -132,6 +162,24 @@ struct TimeBlockEditView: View {
                 DatePicker("End Time", selection: $rule.endTime, displayedComponents: .hourAndMinute)
             }
             
+            // Tracking Mode
+            Section {
+                Picker("Tracking Mode", selection: Binding(
+                    get: { rule.trackingMode },
+                    set: { rule.trackingMode = $0 }
+                )) {
+                    ForEach(TrackingMode.allCases, id: \.self) { mode in
+                        Label(mode.displayName, systemImage: mode.icon)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Text("Tracking Mode")
+            } footer: {
+                Text(trackingModeFooter)
+            }
+            
             Section {
                 Picker("Link to Activity Set", selection: $rule.linkedSetID) {
                     Text("None").tag(nil as UUID?)
@@ -142,7 +190,12 @@ struct TimeBlockEditView: View {
             } header: {
                 Text("Auto-Switch")
             } footer: {
-                Text("When this time block starts, automatically switch to the selected activity set")
+                if rule.trackingMode == .off {
+                    Text("Auto-switch is disabled when tracking mode is Off")
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("When this time block starts, automatically switch to the selected activity set")
+                }
             }
             
             Section {
@@ -197,6 +250,17 @@ struct TimeBlockEditView: View {
         }
         .onAppear {
             selectedDays = Set(rule.daysOfWeek)
+        }
+    }
+    
+    private var trackingModeFooter: String {
+        switch rule.trackingMode {
+        case .strict:
+            return "Track activities and gaps. Best for work hours."
+        case .relaxed:
+            return "Track activities but no gaps. Best for personal time."
+        case .off:
+            return "Manual tracking only. Best for sleep or downtime."
         }
     }
 }

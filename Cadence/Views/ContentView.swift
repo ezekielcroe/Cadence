@@ -1,60 +1,55 @@
-// MARK: - Updated ContentView with Reorganized Tabs
-
 import SwiftUI
 import SwiftData
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var selectedTab = 0
+    @State private var selectedTab = 2 // Default to Timer
     
     var body: some View {
         Group {
             if let manager = timeTrackingManager {
                 TabView(selection: $selectedTab) {
                     
-                    // Sets and time blocks
+                    // Tab 0: Sets
                     SetsView()
                         .tabItem {
                             Label("Sets", systemImage: "square.grid.2x2")
                         }
-                        .tag(3)
+                        .tag(0)
                     
-                    // Records view
+                    // Tab 1: Records
                     RecordsView()
                         .tabItem {
                             Label("Records", systemImage: "list.bullet.rectangle")
                         }
-                        .tag(0)
+                        .tag(1)
                     
-                    // TIMER - CENTRAL TAB (most important)
+                    // Tab 2: TIMER (Center)
                     TrackingView(manager: manager)
                         .tabItem {
                             Label("Timer", systemImage: "timer")
                         }
                         .tag(2)
                     
-                    // Reports view
+                    // Tab 3: Reports
                     ReportsView()
                         .tabItem {
                             Label("Reports", systemImage: "chart.xyaxis.line")
                         }
-                        .tag(1)
+                        .tag(3)
                     
-                    // Settings
+                    // Tab 4: Settings
                     SettingsView()
                         .tabItem {
                             Label("Settings", systemImage: "gear")
                         }
                         .tag(4)
                 }
-                .onAppear {
-                    // Set Timer as default selected tab
-                    selectedTab = 2
-                }
             } else {
-                ProgressView("Loading...")
+                ProgressView("Loading Cadence...")
                     .onAppear {
+                        // Initialize manager on first load
                         timeTrackingManager = TimeTrackingManager(modelContext: modelContext)
                     }
             }
