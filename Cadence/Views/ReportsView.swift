@@ -12,6 +12,7 @@ import Charts
 struct ReportsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allTimeBlocks: [TimeBlock]
+    @Query private var activities: [Activity]
     
     @State private var selectedPeriod: ReportGenerator.ReportPeriod = .thisWeek
     @State private var report: ReportGenerator.Report?
@@ -24,7 +25,6 @@ struct ReportsView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    // Period Picker
                     Picker("Period", selection: $selectedPeriod) {
                         Text("This Week").tag(ReportGenerator.ReportPeriod.thisWeek)
                         Text("Last Week").tag(ReportGenerator.ReportPeriod.lastWeek)
@@ -35,172 +35,33 @@ struct ReportsView: View {
                     .padding(.horizontal)
                     
                     if let report = report {
-                        // Summary Cards
+                        // Summaries
                         HStack(spacing: 12) {
-                            SummaryCard(
-                                title: "Total Time",
-                                value: report.totalDuration.formattedDuration,
-                                icon: "clock.fill",
-                                color: .blue
-                            )
-                            
-                            SummaryCard(
-                                title: "Activities",
-                                value: "\(report.totalBlocks)",
-                                icon: "list.bullet",
-                                color: .green
-                            )
+                            SummaryCard(title: "Total Time", value: report.totalDuration.formattedDuration, icon: "clock.fill", color: .blue)
+                            SummaryCard(title: "Activities", value: "\(report.totalBlocks)", icon: "list.bullet", color: .green)
                         }
                         .padding(.horizontal)
                         
-                        HStack(spacing: 12) {
-                            SummaryCard(
-                                title: "Switches",
-                                value: "\(report.totalSwitches)",
-                                icon: "arrow.triangle.2.circlepath",
-                                color: .orange
-                            )
-                            
-                            if let mostProductive = report.mostProductiveDay {
-                                SummaryCard(
-                                    title: "Best Day",
-                                    value: mostProductive.duration.formattedDuration,
-                                    icon: "star.fill",
-                                    color: .yellow
-                                )
-                            }
-                        }
-                        .padding(.horizontal)
-                        
-                        // Comparison Card
+                        // Comparison
                         if let comparison = report.comparisonToPrevious {
-                            ComparisonCard(comparison: comparison, currentTotal: report.totalDuration)
+                            ComparisonCard(comparison: comparison)
                                 .padding(.horizontal)
                         }
                         
                         // Top Activities
                         if !report.topActivities.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Top Activities")
-                                    .font(.headline)
-                                    .padding(.horizontal)
-                                
-                                ForEach(Array(report.topActivities.enumerated()), id: \.offset) { index, activity in
-                                    HStack {
-                                        Text("\(index + 1)")
-                                            .font(.title3)
-                                            .fontWeight(.bold)
-                                            .foregroundStyle(.secondary)
-                                            .frame(width: 30)
-                                        
-                                        if let breakdown = report.activityBreakdown.first(where: { $0.name == activity.name }) {
-                                            Circle()
-                                                .fill(Color(hex: breakdown.color))
-                                                .frame(width: 12, height: 12)
-                                        }
-                                        
-                                        Text(activity.name)
-                                            .font(.subheadline)
-                                        
-                                        Spacer()
-                                        
-                                        VStack(alignment: .trailing, spacing: 2) {
-                                            Text(activity.duration.formattedDuration)
-                                                .font(.subheadline)
-                                                .fontWeight(.semibold)
-                                                .monospacedDigit()
-                                            
-                                            if let breakdown = report.activityBreakdown.first(where: { $0.name == activity.name }) {
-                                                Text("\(Int(breakdown.percentage))%")
-                                                    .font(.caption)
-                                                    .foregroundStyle(.secondary)
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 8)
-                                }
-                            }
-                            .padding(.vertical)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(12)
-                            .padding(.horizontal)
+                            TopActivitiesCard(report: report)
+                                .padding(.horizontal)
                         }
                         
-                        // Activity Breakdown Chart
+                        // Charts
                         if !report.activityBreakdown.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Activity Breakdown")
-                                    .font(.headline)
-                                    .padding(.horizontal)
-                                
-                                Chart(report.activityBreakdown.prefix(8), id: \.name) { activity in
-                                    BarMark(
-                                        x: .value("Duration", activity.duration),
-                                        y: .value("Activity", activity.name)
-                                    )
-                                    .foregroundStyle(Color(hex: activity.color))
-                                    .annotation(position: .trailing) {
-                                        Text(activity.duration.formattedDuration)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                }
-                                .frame(height: CGFloat(min(report.activityBreakdown.count, 8)) * 50)
-                                .chartXAxis {
-                                    AxisMarks(position: .bottom)
-                                }
+                            BreakdownChart(report: report)
                                 .padding(.horizontal)
-                            }
-                            .padding(.vertical)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(12)
-                            .padding(.horizontal)
-                        }
-                        
-                        // Daily Trend Chart
-                        if !report.dailyTotals.isEmpty {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Text("Daily Trend")
-                                    .font(.headline)
-                                    .padding(.horizontal)
-                                
-                                Chart(report.dailyTotals, id: \.date) { daily in
-                                    BarMark(
-                                        x: .value("Date", daily.date, unit: .day),
-                                        y: .value("Duration", daily.duration / 3600) // Convert to hours
-                                    )
-                                    .foregroundStyle(.blue.gradient)
-                                }
-                                .frame(height: 200)
-                                .chartXAxis {
-                                    AxisMarks(values: .stride(by: .day)) { value in
-                                        AxisValueLabel(format: .dateTime.weekday(.narrow))
-                                    }
-                                }
-                                .chartYAxis {
-                                    AxisMarks { value in
-                                        AxisValueLabel {
-                                            if let hours = value.as(Double.self) {
-                                                Text("\(Int(hours))h")
-                                            }
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal)
-                            }
-                            .padding(.vertical)
-                            .background(Color(.systemGray6))
-                            .cornerRadius(12)
-                            .padding(.horizontal)
                         }
                         
                     } else {
-                        ContentUnavailableView(
-                            "No Data",
-                            systemImage: "chart.bar.xaxis",
-                            description: Text("No activities tracked for this period")
-                        )
+                        ContentUnavailableView("No Data", systemImage: "chart.bar.xaxis")
                     }
                 }
                 .padding(.vertical)
@@ -219,17 +80,13 @@ struct ReportsView: View {
                     ShareSheet(text: reportGenerator.formatReportAsText(report))
                 }
             }
-            .onChange(of: selectedPeriod) { _, _ in
-                generateReport()
-            }
-            .onAppear {
-                generateReport()
-            }
+            .onChange(of: selectedPeriod) { _, _ in generateReport() }
+            .onAppear { generateReport() }
         }
     }
     
     private func generateReport() {
-        report = reportGenerator.generateReport(for: selectedPeriod, blocks: allTimeBlocks)
+        report = reportGenerator.generateReport(for: selectedPeriod, blocks: allTimeBlocks, activities: activities)
     }
     
     private func shareReport() {
@@ -239,27 +96,150 @@ struct ReportsView: View {
     }
 }
 
-// MARK: - Summary Card
-struct SummaryCard: View {
-    let title: String
-    let value: String
-    let icon: String
-    let color: Color
+// MARK: - Subviews
+
+struct ComparisonCard: View {
+    let comparison: ReportGenerator.Report.ComparisonData
+    
+    // Explicitly compute the array to avoid Slice/Binding issues
+    var topChanges: [ActivityChange] {
+        Array(comparison.activityChanges.prefix(3))
+    }
     
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title2)
-                .foregroundStyle(color)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "chart.line.uptrend.xyaxis").foregroundStyle(.blue)
+                Text("Compared to Previous").font(.headline)
+            }
             
-            Text(value)
-                .font(.title3)
-                .fontWeight(.bold)
-                .monospacedDigit()
+            // Total Change
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Total Change").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Image(systemName: comparison.durationChange >= 0 ? "arrow.up.right" : "arrow.down.right")
+                        Text(abs(comparison.durationChange).formattedDuration).fontWeight(.semibold)
+                    }
+                    .foregroundStyle(comparison.durationChange >= 0 ? .green : .red)
+                }
+                Spacer()
+            }
             
-            Text(title)
+            if !topChanges.isEmpty {
+                Divider()
+                Text("Biggest Changes").font(.subheadline).foregroundStyle(.secondary)
+                
+                // Clean Loop: Iterating over a clear array of ActivityChange
+                ForEach(topChanges) { change in
+                    ActivityChangeRow(change: change)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - The Isolated Row View (Fixes the logic errors)
+struct ActivityChangeRow: View {
+    let change: ActivityChange
+    
+    private var color: Color {
+        let isIncrease = change.change > 0
+        switch change.goal {
+        case .increase:
+            return isIncrease ? .green : .red
+        case .decrease:
+            return isIncrease ? .red : .green
+        case .neutral:
+            return .secondary
+        }
+    }
+    private var icon: String {
+        let isIncrease = change.change > 0
+        switch change.goal {
+        case .increase, .decrease:
+            return isIncrease ? "arrow.up" : "arrow.down"
+        case .neutral:
+            return isIncrease ? "arrow.up" : "arrow.down"
+        }
+    }
+    
+    var body: some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(color)
+                    .frame(width: 12)
+                
+                Text(change.name)
+                    .font(.caption)
+                    .fontWeight(.medium)
+            }
+            
+            Spacer()
+            
+            Text(abs(change.change).formattedDuration)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .monospacedDigit()
+                .foregroundStyle(color)
+        }
+    }
+}
+
+struct TopActivitiesCard: View {
+    let report: ReportGenerator.Report
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Top Activities").font(.headline)
+            ForEach(Array(report.topActivities.enumerated()), id: \.offset) { index, item in
+                HStack {
+                    Text("\(index + 1)").font(.headline).foregroundStyle(.secondary).frame(width: 25)
+                    Text(item.name).font(.subheadline)
+                    Spacer()
+                    Text(item.duration.formattedDuration).font(.subheadline).monospacedDigit()
+                }
+                if index < report.topActivities.count - 1 { Divider() }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+struct BreakdownChart: View {
+    let report: ReportGenerator.Report
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Activity Breakdown").font(.headline)
+            Chart(report.activityBreakdown.prefix(8), id: \.name) { item in
+                BarMark(
+                    x: .value("Duration", item.duration),
+                    y: .value("Activity", item.name)
+                )
+                .foregroundStyle(Color(hex: item.color))
+            }
+            .frame(height: 250)
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+struct SummaryCard: View {
+    let title: String, value: String, icon: String, color: Color
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: icon).font(.title2).foregroundStyle(color)
+            Text(value).font(.title3).fontWeight(.bold).lineLimit(1).minimumScaleFactor(0.8)
+            Text(title).font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding()
@@ -268,94 +248,10 @@ struct SummaryCard: View {
     }
 }
 
-// MARK: - Comparison Card
-struct ComparisonCard: View {
-    let comparison: ReportGenerator.Report.ComparisonData
-    let currentTotal: TimeInterval
-    
-    var changeColor: Color {
-        comparison.durationChange >= 0 ? .green : .red
-    }
-    
-    var changeIcon: String {
-        comparison.durationChange >= 0 ? "arrow.up.right" : "arrow.down.right"
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .foregroundStyle(.blue)
-                Text("Compared to Previous Period")
-                    .font(.headline)
-            }
-            
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Total Change")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    
-                    HStack(spacing: 4) {
-                        Image(systemName: changeIcon)
-                            .font(.caption)
-                        Text(abs(comparison.durationChange).formattedDuration)
-                            .fontWeight(.semibold)
-                        Text("(\(String(format: "%.1f", abs(comparison.percentageChange)))%)")
-                            .font(.caption)
-                    }
-                    .foregroundStyle(changeColor)
-                }
-                
-                Spacer()
-            }
-            
-            if !comparison.activityChanges.isEmpty {
-                Divider()
-                
-                Text("Biggest Changes")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                
-                ForEach(comparison.activityChanges.prefix(3), id: \.name) { change in
-                    HStack {
-                        Image(systemName: change.change >= 0 ? "arrow.up" : "arrow.down")
-                            .font(.caption)
-                            .foregroundStyle(change.change >= 0 ? .green : .red)
-                        
-                        Text(change.name)
-                            .font(.caption)
-                        
-                        Spacer()
-                        
-                        Text(abs(change.change).formattedDuration)
-                            .font(.caption)
-                            .monospacedDigit()
-                    }
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-}
-
-// MARK: - Share Sheet
 struct ShareSheet: UIViewControllerRepresentable {
     let text: String
-    
     func makeUIViewController(context: Context) -> UIActivityViewController {
         UIActivityViewController(activityItems: [text], applicationActivities: nil)
     }
-    
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-#Preview {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self, configurations: config)
-    
-    return ReportsView()
-        .modelContainer(container)
 }

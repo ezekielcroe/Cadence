@@ -1,6 +1,37 @@
 import Foundation
 import SwiftData
 
+// MARK: - Activity Goal Enum
+enum ActivityGoal: String, Codable, CaseIterable {
+    case increase = "increase" // Keep High
+    case decrease = "decrease" // Keep Low
+    case neutral = "neutral"   // Neutral
+    
+    var displayName: String {
+        switch self {
+        case .increase: return "Keep High"
+        case .decrease: return "Keep Low"
+        case .neutral: return "Neutral"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .increase: return "arrow.up.circle"
+        case .decrease: return "arrow.down.circle"
+        case .neutral: return "minus.circle"
+        }
+    }
+    
+    var color: String {
+        switch self {
+        case .increase: return "#4CAF50" // Green
+        case .decrease: return "#F44336" // Red (as in, limit it)
+        case .neutral: return "#9E9E9E"  // Gray
+        }
+    }
+}
+
 // MARK: - Tracking Mode Enum
 enum TrackingMode: String, Codable, CaseIterable {
     case strict = "strict"      // Track activities AND gaps, auto-switch sets
@@ -51,7 +82,15 @@ final class Activity {
     var createdAt: Date
     var sortOrder: Int
     
-    init(name: String, color: String, setID: UUID, sortOrder: Int = 0, emoji: String? = nil) {
+    // NEW: Goal property
+    var goalRaw: String = "neutral"
+    
+    var goal: ActivityGoal {
+        get { ActivityGoal(rawValue: goalRaw) ?? .neutral }
+        set { goalRaw = newValue.rawValue }
+    }
+    
+    init(name: String, color: String, setID: UUID, sortOrder: Int = 0, emoji: String? = nil, goal: ActivityGoal = .neutral) {
         self.id = UUID()
         self.name = name
         self.emoji = emoji
@@ -59,6 +98,7 @@ final class Activity {
         self.setID = setID
         self.createdAt = Date()
         self.sortOrder = sortOrder
+        self.goalRaw = goal.rawValue
     }
 }
 
@@ -90,7 +130,6 @@ final class TimeBlockRule {
     var daysOfWeek: [Int] // 1=Sunday, 2=Monday, etc. Empty = all days
     var createdAt: Date
     
-    // NEW: Tracking mode for this time block
     var trackingModeRaw: String
     
     var trackingMode: TrackingMode {

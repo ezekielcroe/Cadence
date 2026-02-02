@@ -349,6 +349,7 @@ struct AddActivityView: View {
     @State private var name = ""
     @State private var emoji = ""
     @State private var selectedColor = "#4CAF50"
+    @State private var selectedGoal: ActivityGoal = .neutral
     
     let availableColors = [
         "#F44336", "#E91E63", "#9C27B0", "#673AB7",
@@ -361,10 +362,9 @@ struct AddActivityView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
+                Section(header: Text("Details"), footer: Text("Tap 🌐 on keyboard to add emoji for easier identification")) {
                     TextField("Emoji (optional)", text: $emoji)
-                        .onChange(of: emoji) { oldValue, newValue in
-                            // Limit to first emoji (emojis can be 1-2 characters)
+                        .onChange(of: emoji) { _, newValue in
                             if newValue.count > 2 {
                                 emoji = String(newValue.prefix(2))
                             }
@@ -373,12 +373,24 @@ struct AddActivityView: View {
                         .multilineTextAlignment(.center)
                     
                     TextField("Activity Name", text: $name)
-                } footer: {
-                    Text("Tap 🌐 on keyboard to add emoji for easier identification")
-                        .foregroundStyle(.secondary)
                 }
                 
-                Section("Color") {
+                // FIXED: Use explicit header/footer to fix compilation error
+                Section(header: Text("Productivity Goal"), footer: Text("Helps reports determine if an increase in duration is good or bad.")) {
+                    Picker("Goal", selection: $selectedGoal) {
+                        ForEach(ActivityGoal.allCases, id: \.self) { goal in
+                            HStack {
+                                Image(systemName: goal.icon)
+                                Text(goal.displayName)
+                            }
+                            .tag(goal)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+                
+                // FIXED: Explicit header for Color section
+                Section(header: Text("Color")) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {
                         ForEach(availableColors, id: \.self) { color in
                             Circle()
@@ -400,16 +412,11 @@ struct AddActivityView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                    Button("Cancel") { dismiss() }
                 }
-                
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        addActivity()
-                    }
-                    .disabled(name.isEmpty)
+                    Button("Add") { addActivity() }
+                        .disabled(name.isEmpty)
                 }
             }
         }
@@ -426,7 +433,8 @@ struct AddActivityView: View {
             color: selectedColor,
             setID: setID,
             sortOrder: existingCount,
-            emoji: emoji.isEmpty ? nil : emoji
+            emoji: emoji.isEmpty ? nil : emoji,
+            goal: selectedGoal
         )
         
         modelContext.insert(newActivity)
@@ -452,7 +460,7 @@ struct ActivityEditView: View {
     
     var body: some View {
         Form {
-            Section {
+            Section(header: Text("Details"), footer: Text("Tap 🌐 on keyboard to add emoji for easier identification")) {
                 TextField("Emoji (optional)", text: Binding(
                     get: { activity.emoji ?? "" },
                     set: { newValue in
@@ -464,12 +472,24 @@ struct ActivityEditView: View {
                 .multilineTextAlignment(.center)
                 
                 TextField("Activity Name", text: $activity.name)
-            } footer: {
-                Text("Tap 🌐 on keyboard to add emoji for easier identification")
-                    .foregroundStyle(.secondary)
             }
             
-            Section("Color") {
+            // FIXED: Explicit header/footer
+            Section(header: Text("Productivity Goal"), footer: Text("Helps reports determine if an increase in duration is good or bad.")) {
+                Picker("Goal", selection: $activity.goal) {
+                    ForEach(ActivityGoal.allCases, id: \.self) { goal in
+                        HStack {
+                            Image(systemName: goal.icon)
+                            Text(goal.displayName)
+                        }
+                        .tag(goal)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+            
+            // FIXED: Explicit header
+            Section(header: Text("Color")) {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {
                     ForEach(availableColors, id: \.self) { color in
                         Circle()
