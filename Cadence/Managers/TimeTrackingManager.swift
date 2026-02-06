@@ -23,7 +23,7 @@ class TimeTrackingManager: ObservableObject {
     private(set) var maxBackgroundDuration: TimeInterval = 900
     
     // Default tracking mode (when not within any time block rule)
-    private(set) var defaultTrackingMode: TrackingMode = .relaxed
+    private(set) var defaultTrackingMode: TrackingMode = .on
     
     // Notification preferences
     var notificationsEnabled: Bool {

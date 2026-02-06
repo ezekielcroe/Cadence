@@ -13,9 +13,6 @@ import SwiftData
 class TimeBlockEditor {
     private var modelContext: ModelContext
     
-    // Threshold for "short" activities (5 minutes) - used for merge rules
-    static let shortActivityThreshold: TimeInterval = 300
-    
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
@@ -27,16 +24,6 @@ class TimeBlockEditor {
         guard let end1 = block1.endTime else { return false }
         let timeDiff = abs(end1.timeIntervalSince(block2.startTime))
         return timeDiff < 1.0 // Within 1 second tolerance
-    }
-    
-    /// Check if a block can participate in a merge operation
-    /// Returns true for: gaps, pauses, or short activities (<5 min)
-    func canBlockParticipateInMerge(_ block: TimeBlock) -> Bool {
-        if block.isGap || block.isPauseBlock {
-            return true
-        }
-        // Short activity (< 5 minutes)
-        return block.duration < Self.shortActivityThreshold
     }
     
     /// Check if a set of blocks can be merged
@@ -52,20 +39,13 @@ class TimeBlockEditor {
             }
         }
         
-        // At least one block must be mergeable (gap, pause, or short activity)
-        let hasMergeableBlock = sorted.contains { canBlockParticipateInMerge($0) }
-        
-        return hasMergeableBlock
+        return true
     }
     
     /// Check if a block can be split
-    /// Now allows ANY completed block with ≥2 min duration to be split
     func canSplit(_ block: TimeBlock) -> Bool {
-        guard let endTime = block.endTime else { return false }
-        let duration = endTime.timeIntervalSince(block.startTime)
-        
-        // Must be at least 2 minutes
-        return duration >= 120
+        // Can split any completed block
+        return block.endTime != nil
     }
     
     // MARK: - Merge

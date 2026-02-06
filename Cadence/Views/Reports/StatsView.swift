@@ -157,7 +157,7 @@ struct StatsView: View {
     private func getActivityColor(_ name: String) -> Color {
         // Find the color from time blocks
         if let block = timeBlocks.first(where: { $0.activityName == name }) {
-            return Color(hex: block.activityColor)
+            return Color(block.activityColor)
         }
         return .gray
     }
@@ -251,7 +251,7 @@ struct TimelineChart: View {
                     let duration = end.timeIntervalSince(start) / 86400
                     
                     Rectangle()
-                        .fill(Color(hex: block.activityColor))
+                        .fill(Color(block.activityColor))
                         .frame(width: geometry.size.width * duration)
                         .offset(x: geometry.size.width * startOffset)
                 }

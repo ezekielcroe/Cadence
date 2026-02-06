@@ -15,8 +15,7 @@ struct RecordDetailView: View {
     
     let block: TimeBlock
     
-    @State private var showingEditSheet = false
-    @State private var showingTimeline = false
+    @State private var showingAudit = false
     
     var body: some View {
         NavigationStack {
@@ -26,7 +25,7 @@ struct RecordDetailView: View {
                     VStack(spacing: 16) {
                         HStack {
                             Circle()
-                                .fill(Color(hex: block.activityColor))
+                                .fill(Color(block.activityColor))
                                 .frame(width: 40, height: 40)
                             
                             VStack(alignment: .leading) {
@@ -51,7 +50,7 @@ struct RecordDetailView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color(hex: block.activityColor).opacity(0.1))
+                        .background(Color(block.activityColor).opacity(0.1))
                         .cornerRadius(12)
                     }
                     .padding()
@@ -61,19 +60,7 @@ struct RecordDetailView: View {
                     // Action buttons
                     VStack(spacing: 12) {
                         Button {
-                            showingEditSheet = true
-                        } label: {
-                            Label("Edit Details & Remarks", systemImage: "pencil")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
-                        }
-                        
-                        // NEW: Edit in Timeline button replaces Merge/Split
-                        Button {
-                            showingTimeline = true
+                            showingAudit = true
                         } label: {
                             Label("Edit in Timeline", systemImage: "chart.bar.xaxis")
                                 .frame(maxWidth: .infinity)
@@ -123,15 +110,12 @@ struct RecordDetailView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .sheet(isPresented: $showingEditSheet) {
-                RecordEditSheet(timeBlock: block)
-            }
-            .sheet(isPresented: $showingTimeline) {
+            .sheet(isPresented: $showingAudit) {
                 NavigationStack {
-                    TimelineEditorView(date: block.startTime, modelContext: modelContext)
+                    AuditListView(date: block.startTime)
                         .toolbar {
                             ToolbarItem(placement: .confirmationAction) {
-                                Button("Done") { showingTimeline = false }
+                                Button("Done") { showingAudit = false }
                             }
                         }
                 }
@@ -152,34 +136,6 @@ struct DetailRow: View {
             Label(label, systemImage: icon).foregroundColor(.secondary)
             Spacer()
             Text(value).fontWeight(.medium).foregroundColor(valueColor)
-        }
-    }
-}
-
-struct FiltersView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Binding var selectedActivity: String?
-    let activities: [String]
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Activity") {
-                    Picker("Filter by Activity", selection: $selectedActivity) {
-                        Text("All Activities").tag(nil as String?)
-                        ForEach(activities, id: \.self) { activity in
-                            Text(activity).tag(activity as String?)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-            }
-            .navigationTitle("Filters")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-            }
         }
     }
 }

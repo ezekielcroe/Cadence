@@ -34,40 +34,36 @@ enum ActivityGoal: String, Codable, CaseIterable {
 
 // MARK: - Tracking Mode Enum
 enum TrackingMode: String, Codable, CaseIterable {
-    case strict = "strict"      // Track activities AND gaps, auto-switch sets
-    case relaxed = "relaxed"    // Track activities, NO gaps, auto-switch sets
-    case off = "off"            // Manual tracking only, no gaps, no auto-switch
+    case on = "on"      // Track activities and gaps
+    case off = "off"    // Tracker paused
     
     var displayName: String {
         switch self {
-        case .strict: return "Strict"
-        case .relaxed: return "Relaxed"
-        case .off: return "Off"
+        case .on: return "Tracking"
+        case .off: return "Paused"
         }
     }
     
     var description: String {
         switch self {
-        case .strict: return "Track activities and gaps"
-        case .relaxed: return "Track activities, no gaps"
-        case .off: return "Manual only, no auto-switch"
+        case .on: return "Track activities and gaps"
+        case .off: return "Tracker paused"
         }
     }
     
     var icon: String {
         switch self {
-        case .strict: return "clock.badge.checkmark"
-        case .relaxed: return "clock"
+        case .on: return "clock.badge.checkmark"
         case .off: return "clock.badge.xmark"
         }
     }
     
     var tracksGaps: Bool {
-        self == .strict
+        self == .on
     }
     
     var autoSwitchesSets: Bool {
-        self != .off
+        self == .on
     }
 }
 
@@ -133,11 +129,11 @@ final class TimeBlockRule {
     var trackingModeRaw: String
     
     var trackingMode: TrackingMode {
-        get { TrackingMode(rawValue: trackingModeRaw) ?? .relaxed }
+        get { TrackingMode(rawValue: trackingModeRaw) ?? .on }
         set { trackingModeRaw = newValue.rawValue }
     }
     
-    init(name: String, startTime: Date, endTime: Date, linkedSetID: UUID? = nil, daysOfWeek: [Int] = [], trackingMode: TrackingMode = .relaxed) {
+    init(name: String, startTime: Date, endTime: Date, linkedSetID: UUID? = nil, daysOfWeek: [Int] = [], trackingMode: TrackingMode = .on) {
         self.id = UUID()
         self.name = name
         self.startTime = startTime

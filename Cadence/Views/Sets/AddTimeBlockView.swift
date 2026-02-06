@@ -18,7 +18,7 @@ struct AddTimeBlockView: View {
     @State private var endTime = Date()
     @State private var linkedSetID: UUID? = nil
     @State private var selectedDays: Set<Int> = []
-    @State private var trackingMode: TrackingMode = .relaxed
+    @State private var trackingMode: TrackingMode = .on
     
     let daysOfWeek = [
         (1, "Sun"), (2, "Mon"), (3, "Tue"), (4, "Wed"),
@@ -37,17 +37,15 @@ struct AddTimeBlockView: View {
                 
                 // Tracking Mode
                 Section {
-                    Picker("Tracking Mode", selection: $trackingMode) {
-                        ForEach(TrackingMode.allCases, id: \.self) { mode in
-                            Label(mode.displayName, systemImage: mode.icon)
-                                .tag(mode)
-                        }
+                    Picker("Mode", selection: $trackingMode) {  // ✅ Bind directly to $trackingMode
+                        Label("Tracking", systemImage: "clock.badge.checkmark").tag(TrackingMode.on)
+                        Label("Paused", systemImage: "clock.badge.xmark").tag(TrackingMode.off)
                     }
-                    .pickerStyle(.menu)
+                    .pickerStyle(.segmented)
                 } header: {
                     Text("Tracking Mode")
                 } footer: {
-                    Text(trackingModeFooter)
+                    Text(trackingMode == .on ? "Tracks activities and creates gaps" : "Tracker is paused during this time block")
                 }
                 
                 Section {
@@ -60,7 +58,7 @@ struct AddTimeBlockView: View {
                 } header: {
                     Text("Auto-Switch")
                 } footer: {
-                    if trackingMode == .off {
+                    if trackingMode == .off {  // ✅ Use trackingMode directly
                         Text("Auto-switch is disabled when tracking mode is Off")
                             .foregroundStyle(.orange)
                     } else {
@@ -111,17 +109,6 @@ struct AddTimeBlockView: View {
         }
     }
     
-    private var trackingModeFooter: String {
-        switch trackingMode {
-        case .strict:
-            return "Track activities and gaps. Best for work hours."
-        case .relaxed:
-            return "Track activities but no gaps. Best for personal time."
-        case .off:
-            return "Manual tracking only. Best for sleep or downtime."
-        }
-    }
-    
     private func addTimeBlock() {
         let rule = TimeBlockRule(
             name: name,
@@ -153,6 +140,15 @@ struct TimeBlockEditView: View {
         (5, "Thu"), (6, "Fri"), (7, "Sat")
     ]
     
+    private var trackingModeFooter: String {
+        switch rule.trackingMode {
+        case .on:
+            return "Tracks activities and creates gaps"
+        case .off:
+            return "Tracker is paused during this time block"
+        }
+    }
+    
     var body: some View {
         Form {
             TextField("Name", text: $rule.name)
@@ -164,16 +160,11 @@ struct TimeBlockEditView: View {
             
             // Tracking Mode
             Section {
-                Picker("Tracking Mode", selection: Binding(
-                    get: { rule.trackingMode },
-                    set: { rule.trackingMode = $0 }
-                )) {
-                    ForEach(TrackingMode.allCases, id: \.self) { mode in
-                        Label(mode.displayName, systemImage: mode.icon)
-                            .tag(mode)
-                    }
+                Picker("Mode", selection: $rule.trackingMode) {
+                    Label("Tracking", systemImage: "clock.badge.checkmark").tag(TrackingMode.on)
+                    Label("Paused", systemImage: "clock.badge.xmark").tag(TrackingMode.off)
                 }
-                .pickerStyle(.menu)
+                .pickerStyle(.segmented)
             } header: {
                 Text("Tracking Mode")
             } footer: {
@@ -250,17 +241,6 @@ struct TimeBlockEditView: View {
         }
         .onAppear {
             selectedDays = Set(rule.daysOfWeek)
-        }
-    }
-    
-    private var trackingModeFooter: String {
-        switch rule.trackingMode {
-        case .strict:
-            return "Track activities and gaps. Best for work hours."
-        case .relaxed:
-            return "Track activities but no gaps. Best for personal time."
-        case .off:
-            return "Manual tracking only. Best for sleep or downtime."
         }
     }
 }

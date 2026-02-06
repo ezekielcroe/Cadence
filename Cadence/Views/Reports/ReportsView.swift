@@ -223,7 +223,7 @@ struct BreakdownChart: View {
                     x: .value("Duration", item.duration),
                     y: .value("Activity", item.name)
                 )
-                .foregroundStyle(Color(hex: item.color))
+                .foregroundStyle(Color(item.color))
             }
             .frame(height: 250)
         }

@@ -131,19 +131,16 @@ struct CadenceApp: App {
             let calendar = Calendar.current
             
             // Default Rules Setup...
-            let workStart = calendar.date(from: DateComponents(hour: 9, minute: 0))!
+            let workStart = calendar.date(from: DateComponents(hour: 8, minute: 30))!
             let workEnd = calendar.date(from: DateComponents(hour: 18, minute: 0))!
-            let eveningStart = calendar.date(from: DateComponents(hour: 18, minute: 0))!
-            let eveningEnd = calendar.date(from: DateComponents(hour: 23, minute: 0))!
+            let personalStart = calendar.date(from: DateComponents(hour: 18, minute: 0))!
+            let personalEnd = calendar.date(from: DateComponents(hour: 23, minute: 0))!
             let weekendDayStart = calendar.date(from: DateComponents(hour: 9, minute: 0))!
             let weekendDayEnd = calendar.date(from: DateComponents(hour: 18, minute: 0))!
-            let morningStart = calendar.date(from: DateComponents(hour: 6, minute: 0))!
-            let morningEnd = calendar.date(from: DateComponents(hour: 9, minute: 0))!
             
-            context.insert(TimeBlockRule(name: "Work Hours", startTime: workStart, endTime: workEnd, linkedSetID: workSet.id, daysOfWeek: [2, 3, 4, 5, 6], trackingMode: .strict))
-            context.insert(TimeBlockRule(name: "Evening", startTime: eveningStart, endTime: eveningEnd, linkedSetID: personalSet.id, daysOfWeek: [], trackingMode: .relaxed))
-            context.insert(TimeBlockRule(name: "Weekend Day", startTime: weekendDayStart, endTime: weekendDayEnd, linkedSetID: weekendSet.id, daysOfWeek: [1, 7], trackingMode: .relaxed))
-            context.insert(TimeBlockRule(name: "Morning Routine", startTime: morningStart, endTime: morningEnd, linkedSetID: personalSet.id, daysOfWeek: [], trackingMode: .relaxed))
+            context.insert(TimeBlockRule(name: "Work Hours", startTime: workStart, endTime: workEnd, linkedSetID: workSet.id, daysOfWeek: [2, 3, 4, 5, 6], trackingMode: .on))
+            context.insert(TimeBlockRule(name: "Personal Time", startTime: personalStart, endTime: personalEnd, linkedSetID: personalSet.id, daysOfWeek: [], trackingMode: .off))
+            context.insert(TimeBlockRule(name: "Weekend Day", startTime: weekendDayStart, endTime: weekendDayEnd, linkedSetID: weekendSet.id, daysOfWeek: [1, 7], trackingMode: .off))
             
             try? context.save()
         }

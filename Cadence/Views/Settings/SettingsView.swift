@@ -118,59 +118,57 @@ struct SettingsView: View {
 struct DefaultTrackingModeView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var selectedMode: TrackingMode = .relaxed
+    @State private var isTrackingEnabled: Bool = true
     
     var body: some View {
         Form {
             Section {
-                Text("This mode applies when you're not within any defined time block.")
+                Text("Controls whether the app tracks activities and creates gaps by default.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             
             Section {
-                ForEach(TrackingMode.allCases, id: \.self) { mode in
-                    Button {
-                        selectedMode = mode
-                        timeTrackingManager?.saveDefaultTrackingMode(mode)
-                    } label: {
-                        HStack {
-                            Image(systemName: mode.icon)
-                                .font(.title3)
-                                .foregroundStyle(colorForMode(mode))
-                                .frame(width: 30)
-                            
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(mode.displayName)
-                                    .font(.body)
-                                    .foregroundStyle(.primary)
-                                Text(mode.description)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            
-                            Spacer()
-                            
-                            if selectedMode == mode {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                            }
-                        }
+                Toggle("Enable Tracking by Default", isOn: $isTrackingEnabled)
+                    .onChange(of: isTrackingEnabled) { _, newValue in
+                        timeTrackingManager?.saveDefaultTrackingMode(newValue ? .on : .off)
                     }
-                    .buttonStyle(.plain)
-                }
             } header: {
                 Text("Default Mode")
+            } footer: {
+                Text("When enabled, the app will track activities and create gaps for untracked time. When disabled, the tracker is paused.")
             }
             
             Section {
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("How Tracking Modes Work", systemImage: "info.circle")
+                    Label("How Tracking Works", systemImage: "info.circle")
                         .font(.headline)
                     
-                    TrackingModeExplanation(mode: .strict)
-                    TrackingModeExplanation(mode: .relaxed)
-                    TrackingModeExplanation(mode: .off)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(alignment: .top) {
+                            Image(systemName: "clock.badge.checkmark")
+                                .foregroundStyle(.blue)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Tracking On")
+                                    .fontWeight(.medium)
+                                Text("• Records all activities\n• Creates gaps when you stop\n• Auto-switches activity sets")
+                                    .font(.caption)
+                            }
+                        }
+                        
+                        HStack(alignment: .top) {
+                            Image(systemName: "clock.badge.xmark")
+                                .foregroundStyle(.gray)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Tracking Off")
+                                    .fontWeight(.medium)
+                                Text("• Tracker is paused\n• No activities recorded\n• Use for sleep or downtime")
+                                    .font(.caption)
+                            }
+                        }
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -182,48 +180,8 @@ struct DefaultTrackingModeView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             timeTrackingManager = TimeTrackingManager(modelContext: modelContext)
-            selectedMode = timeTrackingManager?.defaultTrackingMode ?? .relaxed
+            isTrackingEnabled = timeTrackingManager?.defaultTrackingMode == .on
         }
-    }
-    
-    private func colorForMode(_ mode: TrackingMode) -> Color {
-        switch mode {
-        case .strict: return .red
-        case .relaxed: return .blue
-        case .off: return .gray
-        }
-    }
-}
-
-// MARK: - Tracking Mode Explanation
-struct TrackingModeExplanation: View {
-    let mode: TrackingMode
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: mode.icon)
-                Text(mode.displayName)
-                    .fontWeight(.medium)
-            }
-            .foregroundStyle(.primary)
-            
-            switch mode {
-            case .strict:
-                Text("• Tracks activities and creates gaps when stopped")
-                Text("• Auto-switches activity sets based on time blocks")
-                Text("• Best for work hours when accountability matters")
-            case .relaxed:
-                Text("• Tracks activities but no gaps when stopped")
-                Text("• Auto-switches activity sets based on time blocks")
-                Text("• Best for personal time without pressure")
-            case .off:
-                Text("• Only tracks what you manually start")
-                Text("• No gaps, no auto-switching")
-                Text("• Best for sleep or complete downtime")
-            }
-        }
-        .padding(.vertical, 4)
     }
 }
 

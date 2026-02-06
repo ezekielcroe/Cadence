@@ -130,7 +130,7 @@ struct CurrentActivityCard: View {
                     // Activity name and duration
                     HStack {
                         Circle()
-                            .fill(Color(hex: block.activityColor))
+                            .fill(Color(block.activityColor))
                             .frame(width: 16, height: 16)
                         
                         Text(block.displayName)
@@ -280,7 +280,7 @@ struct ActivityButton: View {
             VStack(spacing: 8) {
                 ZStack {
                     Circle()
-                        .fill(Color(hex: activity.color))
+                        .fill(Color(activity.color))
                         .frame(width: 40, height: 40)
                         .overlay(
                             Circle()
@@ -303,11 +303,11 @@ struct ActivityButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding()
-            .background(isActive ? Color(hex: activity.color).opacity(0.1) : Color(.systemGray6))
+            .background(isActive ? Color(activity.color).opacity(0.1) : Color(.systemGray6))
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(isActive ? Color(hex: activity.color) : Color.clear, lineWidth: 2)
+                    .stroke(isActive ? Color(activity.color) : Color.clear, lineWidth: 2)
             )
         }
         .buttonStyle(.plain)
@@ -379,7 +379,7 @@ struct QuickRemarkSheet: View {
                 VStack(spacing: 8) {
                     HStack {
                         Circle()
-                            .fill(Color(hex: timeBlock.activityColor))
+                            .fill(Color(timeBlock.activityColor))
                             .frame(width: 12, height: 12)
                         
                         Text(timeBlock.displayName)
