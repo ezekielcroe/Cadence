@@ -17,6 +17,7 @@ struct BlockEditSheet: View {
     let onSave: () -> Void
     
     @Query private var activities: [Activity]
+    @Query private var activitySets: [ActivitySet]
     
     // Edit state - we edit copies, not the original directly
     @State private var editedStartTime: Date
@@ -29,6 +30,7 @@ struct BlockEditSheet: View {
     @State private var showingDeleteConfirmation = false
     @State private var showingConflictConfirmation = false
     @State private var showingSplitSheet = false
+    @State private var showingActivityPicker = false
     
     init(
         block: TimeBlock,
@@ -68,7 +70,7 @@ struct BlockEditSheet: View {
                 // Activity selection (not for gaps - they use GapResolver)
                 if !block.isGap && !block.isPauseBlock {
                     Section("Activity") {
-                        activityPicker
+                        activityPickerButton
                     }
                 }
                 
@@ -134,6 +136,13 @@ struct BlockEditSheet: View {
                     }
                 )
             }
+            .sheet(isPresented: $showingActivityPicker) {
+                ActivityPickerSheet(
+                    activities: activities,
+                    activitySets: activitySets,
+                    selectedActivityID: $editedActivityID
+                )
+            }
         }
         .presentationDetents([.large])
     }
@@ -181,21 +190,36 @@ struct BlockEditSheet: View {
         }
     }
     
-    private var activityPicker: some View {
-        Picker("Activity", selection: $editedActivityID) {
-            Text("None").tag(nil as UUID?)
-            
-            ForEach(activities) { activity in
-                HStack {
+    private var activityPickerButton: some View {
+        Button {
+            showingActivityPicker = true
+        } label: {
+            HStack {
+                if let activity = selectedActivity {
+                    // Show selected activity with emoji
+                    if let emoji = activity.emoji {
+                        Text(emoji)
+                            .font(.title3)
+                    }
+                    
                     Circle()
                         .fill(Color(activity.color))
-                        .frame(width: 12, height: 12)
+                        .frame(width: 20, height: 20)
+                    
                     Text(activity.name)
+                        .foregroundStyle(.primary)
+                } else {
+                    Text("Select Activity")
+                        .foregroundStyle(.secondary)
                 }
-                .tag(activity.id as UUID?)
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
         }
-        .pickerStyle(.navigationLink)
     }
     
     private var timeEditors: some View {
@@ -206,7 +230,7 @@ struct BlockEditSheet: View {
                 DatePicker(
                     "",
                     selection: $editedStartTime,
-                    in: allowedStartRange,  // ← ADD THIS
+                    in: allowedStartRange,
                     displayedComponents: .hourAndMinute
                 )
                 .labelsHidden()
@@ -219,7 +243,7 @@ struct BlockEditSheet: View {
                     DatePicker(
                         "",
                         selection: $editedEndTime,
-                        in: allowedEndRange,  // ← ADD THIS
+                        in: allowedEndRange,
                         displayedComponents: .hourAndMinute
                     )
                     .labelsHidden()
@@ -479,18 +503,127 @@ struct BlockEditSheet: View {
     }
 }
 
-// MARK: - Compact Time Picker
+// MARK: - Activity Picker Sheet
 
-struct TimePickerCompact: View {
-    @Binding var time: Date
+struct ActivityPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    let activities: [Activity]
+    let activitySets: [ActivitySet]
+    @Binding var selectedActivityID: UUID?
+    
+    @State private var searchText = ""
+    
+    // Group activities by set
+    private var groupedActivities: [(set: ActivitySet, activities: [Activity])] {
+        activitySets.compactMap { set in
+            let setActivities = activities
+                .filter { $0.setID == set.id }
+                .sorted { $0.name < $1.name } // Alphabetical within set
+            
+            guard !setActivities.isEmpty else { return nil }
+            return (set: set, activities: setActivities)
+        }
+    }
+    
+    private var filteredGroupedActivities: [(set: ActivitySet, activities: [Activity])] {
+        if searchText.isEmpty {
+            return groupedActivities
+        }
+        
+        return groupedActivities.compactMap { group in
+            let filtered = group.activities.filter {
+                $0.name.localizedCaseInsensitiveContains(searchText)
+            }
+            guard !filtered.isEmpty else { return nil }
+            return (set: group.set, activities: filtered)
+        }
+    }
     
     var body: some View {
-        DatePicker(
-            "",
-            selection: $time,
-            displayedComponents: .hourAndMinute
-        )
-        .labelsHidden()
-        .datePickerStyle(.compact)
+        NavigationStack {
+            List {
+                // None option
+                Section {
+                    Button {
+                        selectedActivityID = nil
+                        dismiss()
+                    } label: {
+                        HStack {
+                            Image(systemName: "circle.slash")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 24)
+                            
+                            Text("None")
+                                .foregroundStyle(.primary)
+                            
+                            Spacer()
+                            
+                            if selectedActivityID == nil {
+                                Image(systemName: "checkmark")
+                                    .foregroundStyle(.blue)
+                            }
+                        }
+                    }
+                }
+                
+                // Activities grouped by set
+                ForEach(filteredGroupedActivities, id: \.set.id) { group in
+                    Section {
+                        ForEach(group.activities) { activity in
+                            Button {
+                                selectedActivityID = activity.id
+                                dismiss()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    // Emoji (if available)
+                                    if let emoji = activity.emoji {
+                                        Text(emoji)
+                                            .font(.title3)
+                                            .frame(width: 32)
+                                    } else {
+                                        // Fallback to colored circle
+                                        Circle()
+                                            .fill(Color(activity.color))
+                                            .frame(width: 20, height: 20)
+                                            .frame(width: 32)
+                                    }
+                                    
+                                    // Activity name
+                                    Text(activity.name)
+                                        .foregroundStyle(.primary)
+                                    
+                                    Spacer()
+                                    
+                                    // Checkmark if selected
+                                    if selectedActivityID == activity.id {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(.blue)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text(group.set.name)
+                            if group.set.isActive {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                    }
+                }
+            }
+            .searchable(text: $searchText, prompt: "Search activities")
+            .navigationTitle("Choose Activity")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.large])
     }
 }

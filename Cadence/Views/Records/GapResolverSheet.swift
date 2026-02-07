@@ -3,6 +3,7 @@
 //  Cadence
 //
 //  Convert a gap into a tracked activity
+//  UPDATED: Removed ActivityPickerSheet, simplified to quick actions only
 //
 
 import SwiftUI
@@ -18,10 +19,8 @@ struct GapResolverSheet: View {
     @Query private var activities: [Activity]
     @Query private var activitySets: [ActivitySet]
     
-    @State private var selectedActivity: Activity?
     @State private var adjustedStartTime: Date
     @State private var adjustedEndTime: Date
-    @State private var showingActivityPicker = false
     
     // Common quick actions
     @State private var recentActivities: [Activity] = []
@@ -39,7 +38,7 @@ struct GapResolverSheet: View {
     
     private var setActivities: [Activity] {
         guard let setID = activeSet?.id else { return activities }
-        return activities.filter { $0.setID == setID }
+        return activities.filter { $0.setID == setID }.sorted { $0.sortOrder < $1.sortOrder }
     }
     
     var body: some View {
@@ -135,7 +134,7 @@ struct GapResolverSheet: View {
                 }
             }
             
-            // Current set activities
+            // Current set activities - show more (up to 12)
             VStack(alignment: .leading, spacing: 8) {
                 Text(activeSet?.name ?? "Activities")
                     .font(.caption)
@@ -145,27 +144,21 @@ struct GapResolverSheet: View {
                     GridItem(.flexible()),
                     GridItem(.flexible())
                 ], spacing: 8) {
-                    ForEach(setActivities.prefix(6)) { activity in
+                    ForEach(setActivities.prefix(12)) { activity in
                         ActivityQuickButton(activity: activity) {
                             resolveGap(with: activity)
                         }
                     }
                 }
                 
-                Button {
-                    showingActivityPicker = true
-                } label: {
-                    Label("More Activities...", systemImage: "ellipsis.circle")
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color(.systemGray5))
-                        .cornerRadius(8)
+                // Show hint if there are more activities
+                if setActivities.count > 12 {
+                    Text("\(setActivities.count - 12) more activities available in full editor")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 4)
                 }
-            }
-        }
-        .sheet(isPresented: $showingActivityPicker) {
-            ActivityPickerSheet(activities: activities) { activity in
-                resolveGap(with: activity)
             }
         }
     }
@@ -291,6 +284,7 @@ struct ActivityQuickButton: View {
             HStack(spacing: 8) {
                 if let emoji = activity.emoji {
                     Text(emoji)
+                        .font(.title3)
                 } else {
                     Circle()
                         .fill(Color(activity.color))
@@ -309,56 +303,5 @@ struct ActivityQuickButton: View {
             .cornerRadius(8)
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Activity Picker Sheet
-
-struct ActivityPickerSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    
-    let activities: [Activity]
-    let onSelect: (Activity) -> Void
-    
-    @State private var searchText = ""
-    
-    private var filteredActivities: [Activity] {
-        if searchText.isEmpty {
-            return activities
-        }
-        return activities.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
-    }
-    
-    var body: some View {
-        NavigationStack {
-            List(filteredActivities) { activity in
-                Button {
-                    onSelect(activity)
-                    dismiss()
-                } label: {
-                    HStack {
-                        if let emoji = activity.emoji {
-                            Text(emoji)
-                                .font(.title3)
-                        }
-                        
-                        Circle()
-                            .fill(Color(activity.color))
-                            .frame(width: 20, height: 20)
-                        
-                        Text(activity.name)
-                            .foregroundStyle(.primary)
-                    }
-                }
-            }
-            .searchable(text: $searchText, prompt: "Search activities")
-            .navigationTitle("Choose Activity")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
     }
 }

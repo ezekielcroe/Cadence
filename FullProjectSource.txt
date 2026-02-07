@@ -2925,178 +2925,6 @@ struct FileShareSheet: UIViewControllerRepresentable {
 
 
 ==================================================
-FILE: Cadence/Views/Records/RecordEditSheet.swift
-==================================================
-
-import SwiftUI
-import SwiftData
-
-struct RecordEditSheet: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-    
-    @Bindable var timeBlock: TimeBlock
-    
-    @Query private var allActivities: [Activity]
-    @State private var showingConvertConfirmation = false
-    @State private var selectedActivity: Activity?
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                // MARK: - Status Header
-                Section("Current Status") {
-                    HStack {
-                        Circle()
-                            .fill(Color(timeBlock.activityColor))
-                            .frame(width: 24, height: 24)
-                        
-                        VStack(alignment: .leading) {
-                            Text(timeBlock.displayName)
-                                .font(.headline)
-                            
-                            Text(timeBlock.blockType.capitalized)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        
-                        Spacer()
-                        
-                        if timeBlock.isGap || timeBlock.isPauseBlock {
-                            Text("Can Convert")
-                                .font(.caption)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.2))
-                                .cornerRadius(6)
-                        }
-                    }
-                }
-                
-                // MARK: - Convert Gap/Pause
-                if timeBlock.isGap || timeBlock.isPauseBlock {
-                    Section {
-                        Text("Convert this \(timeBlock.blockType) to a tracked activity:")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        
-                        if allActivities.isEmpty {
-                            Text("No activities available. Create activities in the Sets tab first.")
-                                .font(.caption)
-                                .foregroundColor(.orange)
-                        } else {
-                            ForEach(allActivities) { activity in
-                                Button {
-                                    selectedActivity = activity
-                                    showingConvertConfirmation = true
-                                } label: {
-                                    HStack {
-                                        Circle()
-                                            .fill(Color(activity.color))
-                                            .frame(width: 16, height: 16)
-                                        Text(activity.name)
-                                            .foregroundColor(.primary)
-                                        Spacer()
-                                        Image(systemName: "arrow.right")
-                                            .foregroundColor(.secondary)
-                                            .font(.caption)
-                                    }
-                                }
-                            }
-                        }
-                    } header: {
-                        Text("Convert to Activity")
-                    } footer: {
-                        Text("Assign this time gap to a specific activity.")
-                    }
-                }
-                
-                // MARK: - Time Info (Read Only)
-                Section {
-                    LabeledContent("Start") {
-                        Text(timeBlock.startTime, format: .dateTime)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    if let endTime = timeBlock.endTime {
-                        LabeledContent("End") {
-                            Text(endTime, format: .dateTime)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        LabeledContent("End") {
-                            Text("Ongoing")
-                                .foregroundStyle(.green)
-                        }
-                    }
-                    
-                    LabeledContent("Duration") {
-                        Text(timeBlock.duration.detailedFormattedDuration)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                } header: {
-                    Text("Time Details")
-                } footer: {
-                    Text("To edit start/end times, use the Timeline Editor.")
-                }
-                
-                // MARK: - Remarks
-                Section {
-                    TextEditor(text: $timeBlock.remarks)
-                        .frame(minHeight: 100)
-                } header: {
-                    Text("Remarks")
-                } footer: {
-                    Text("Add notes about this activity session.")
-                }
-            }
-            .navigationTitle("Edit Record")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        try? modelContext.save()
-                        dismiss()
-                    }
-                }
-            }
-            .alert("Convert to \(selectedActivity?.name ?? "Activity")?", isPresented: $showingConvertConfirmation) {
-                Button("Cancel", role: .cancel) { selectedActivity = nil }
-                Button("Convert") {
-                    if let activity = selectedActivity {
-                        performConversion(to: activity)
-                    }
-                }
-            } message: {
-                Text("This will change this \(timeBlock.blockType) into '\(selectedActivity?.name ?? "")'.")
-            }
-        }
-        .presentationDetents([.large])
-    }
-    
-    private func performConversion(to activity: Activity) {
-        timeBlock.activityID = activity.id
-        timeBlock.activityName = activity.name
-        timeBlock.activityColor = activity.color
-        timeBlock.activitySetID = activity.setID
-        timeBlock.blockType = "activity"
-        
-        // Remove pause metadata if converting from pause
-        if timeBlock.isPauseBlock {
-            timeBlock.stopState = "stopped" // Reset state
-        }
-        
-        try? modelContext.save()
-        dismiss()
-    }
-}
-
-
-==================================================
 FILE: Cadence/Views/Records/RecordsView.swift
 ==================================================
 
@@ -3123,8 +2951,8 @@ struct RecordsView: View {
     @State private var selectedBlock: TimeBlock?
     
     // Audit navigation
-    @State private var auditDate: Date?
-    @State private var showingAuditList = false
+    @State private var timelineDate: Date?
+    @State private var showingTimeline = false
     
     // Collapsed sections state
     @State private var collapsedSections: Set<String> = []
@@ -3210,18 +3038,13 @@ struct RecordsView: View {
             .sheet(isPresented: $showingFilters) {
                 FiltersView(selectedActivity: $selectedActivity, activities: uniqueActivities)
             }
-            .sheet(isPresented: $showingAuditList) {
-                if let date = auditDate {
-                    NavigationStack {
-                        AuditListView(date: date)
-                            .toolbar {
-                                ToolbarItem(placement: .confirmationAction) {
-                                    Button("Done") { showingAuditList = false }
-                                }
-                            }
+            .sheet(isPresented: $showingTimeline) {
+                TimelineSheetView(date: timelineDate ?? Date())
+                    .onDisappear {
+                        timelineDate = nil  // Clean up
                     }
-                }
             }
+
             .sheet(item: $selectedBlock) { block in
                 RecordDetailView(block: block)
             }
@@ -3245,10 +3068,10 @@ struct RecordsView: View {
                             .buttonStyle(.plain)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button {
-                                    auditDate = block.startTime
-                                    showingAuditList = true
+                                    timelineDate = block.startTime
+                                    showingTimeline = true
                                 } label: {
-                                    Label("Audit", systemImage: "pencil.and.list.clipboard")
+                                    Label("Timeline", systemImage: "chart.bar.xaxis")
                                 }
                                 .tint(.purple)
                             }
@@ -3304,10 +3127,10 @@ struct RecordsView: View {
             Spacer()
             
             Button {
-                auditDate = blocks.first?.startTime ?? Date()
-                showingAuditList = true
+                timelineDate = blocks.first?.startTime ?? Date()
+                showingTimeline = true
             } label: {
-                Image(systemName: "pencil.and.list.clipboard")
+                Image(systemName: "chart.bar.xaxis")
                     .foregroundStyle(.purple)
                     .padding(6)
                     .background(Color.purple.opacity(0.1))
@@ -3502,6 +3325,206 @@ struct FiltersView: View {
     }
 }
 
+// Helper view for TimelineSheet
+
+struct TimelineSheetView: View {
+    @Environment(\.dismiss) private var dismiss
+    let date: Date
+    
+    private var isEditable: Bool {
+        let threeDaysAgo = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+        return date >= threeDaysAgo
+    }
+    
+    var body: some View {
+        NavigationStack {
+            if isEditable {
+                AuditListView(date: date)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                dismiss()
+                            }
+                        }
+                    }
+            } else {
+                ReadOnlyTimelineView(date: date)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") {
+                                dismiss()
+                            }
+                        }
+                    }
+            }
+        }
+    }
+}
+
+// MARK: - Read-Only Timeline View
+
+struct ReadOnlyTimelineView: View {
+    @Environment(\.modelContext) private var modelContext
+    let date: Date
+    
+    @State private var blocks: [TimeBlock] = []
+    
+    private var sortedBlocks: [TimeBlock] {
+        blocks.sorted { $0.startTime < $1.startTime }
+    }
+    
+    private var totalTracked: TimeInterval {
+        blocks.filter { !$0.isGap && !$0.isPauseBlock }
+            .reduce(0) { $0 + $1.duration }
+    }
+    
+    private var gaps: [TimeBlock] {
+        blocks.filter { $0.isGap }
+    }
+    
+    private var totalGapTime: TimeInterval {
+        gaps.reduce(0) { $0 + $1.duration }
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Info banner
+            HStack {
+                Image(systemName: "lock.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Read-Only Mode")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Text("Timeline cannot be edited after 3 days")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .padding()
+            .background(Color.orange.opacity(0.1))
+            
+            // Summary (same as AuditListView)
+            DaySummaryBar(
+                date: date,
+                totalTracked: totalTracked,
+                gapCount: gaps.count,
+                totalGapTime: totalGapTime,
+                onResolveAllGaps: { } // No-op in read-only mode
+            )
+            
+            if blocks.isEmpty {
+                ContentUnavailableView(
+                    "No Activities",
+                    systemImage: "clock",
+                    description: Text("No time blocks recorded for this day")
+                )
+            } else {
+                List {
+                    ForEach(sortedBlocks) { block in
+                        ReadOnlyBlockRow(block: block)
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    }
+                }
+                .listStyle(.plain)
+            }
+        }
+        .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
+        .onAppear {
+            loadBlocks()
+        }
+    }
+    
+    private func loadBlocks() {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: date)
+        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+        
+        let descriptor = FetchDescriptor<TimeBlock>(
+            predicate: #Predicate { block in
+                block.startTime >= dayStart && block.startTime < dayEnd
+            },
+            sortBy: [SortDescriptor(\.startTime)]
+        )
+        
+        blocks = (try? modelContext.fetch(descriptor)) ?? []
+    }
+}
+
+// MARK: - Read-Only Block Row
+
+struct ReadOnlyBlockRow: View {
+    let block: TimeBlock
+    
+    private var timeRange: String {
+        let start = block.startTime.formatted(date: .omitted, time: .shortened)
+        if let end = block.endTime {
+            let endStr = end.formatted(date: .omitted, time: .shortened)
+            return "\(start) → \(endStr)"
+        }
+        return "\(start) → now"
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Color indicator
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color(block.activityColor))
+                .frame(width: 4, height: 44)
+            
+            // Main content
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(block.displayName)
+                        .font(.body)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.primary)
+                    
+                    if block.isGap {
+                        GapBadge()
+                    } else if block.isPauseBlock {
+                        PauseBadge()
+                    }
+                    
+                    Spacer()
+                    
+                    Text(block.duration.formattedDuration)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
+                }
+                
+                HStack {
+                    Text(timeRange)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                    
+                    if !block.remarks.isEmpty {
+                        Text("•").font(.caption2)
+                        Text(block.remarks.split(separator: "\n").first ?? "")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+            
+            // Lock icon (read-only)
+            Image(systemName: "lock.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 4)
+        .background(Color.clear)
+    }
+}
+
 // MARK: - Preview
 
 #Preview {
@@ -3534,7 +3557,6 @@ struct RecordDetailView: View {
     
     let block: TimeBlock
     
-    @State private var showingEditSheet = false
     @State private var showingAudit = false
     
     var body: some View {
@@ -3579,18 +3601,6 @@ struct RecordDetailView: View {
                     
                     // Action buttons
                     VStack(spacing: 12) {
-                        Button {
-                            showingEditSheet = true
-                        } label: {
-                            Label("Edit Details & Remarks", systemImage: "pencil")
-                                .frame(maxWidth: .infinity)
-                                .padding()
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
-                        }
-                        
-                        // NEW: Edit in Timeline button replaces Merge/Split
                         Button {
                             showingAudit = true
                         } label: {
@@ -3641,9 +3651,6 @@ struct RecordDetailView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
-            }
-            .sheet(isPresented: $showingEditSheet) {
-                RecordEditSheet(timeBlock: block)
             }
             .sheet(isPresented: $showingAudit) {
                 NavigationStack {
@@ -3961,9 +3968,9 @@ struct GapResolverSheet: View {
                     
                     // Time adjustment (optional)
                     timeAdjustmentSection
-                    
-                    // Or delete the gap
-                    deleteSection
+                
+                    // Help section
+                    helpSection
                 }
                 .padding()
             }
@@ -4112,23 +4119,19 @@ struct GapResolverSheet: View {
         .cornerRadius(12)
     }
     
-    private var deleteSection: some View {
+    private var helpSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Or, if this gap was a mistake:")
-                .font(.caption)
+            Label("Need Help?", systemImage: "questionmark.circle")
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
             
-            Button(role: .destructive) {
-                deleteGap()
-            } label: {
-                Label("Delete This Gap", systemImage: "trash")
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.red.opacity(0.1))
-                    .foregroundStyle(.red)
-                    .cornerRadius(8)
-            }
+            Text("Gaps represent untracked time and must be assigned to an activity. If this gap shouldn't exist, you can merge surrounding blocks in the Timeline view.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
     }
     
     // MARK: - Computed
@@ -4185,13 +4188,6 @@ struct GapResolverSheet: View {
             gap.endTime = adjustedEndTime
         }
         
-        try? modelContext.save()
-        onResolved()
-        dismiss()
-    }
-    
-    private func deleteGap() {
-        modelContext.delete(gap)
         try? modelContext.save()
         onResolved()
         dismiss()
@@ -5225,54 +5221,11 @@ struct AuditListView: View {
             } else {
                 blockList
             }
+            
+            bottomToolbar
         }
         .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        isSelectionMode.toggle()
-                        if !isSelectionMode {
-                            selectedBlockIDs.removeAll()
-                        }
-                    } label: {
-                        Label(
-                            isSelectionMode ? "Done Selecting" : "Select Multiple",
-                            systemImage: isSelectionMode ? "checkmark" : "checkmark.circle"
-                        )
-                    }
-                    
-                    if !gaps.isEmpty {
-                        Divider()
-                        Button {
-                            showBulkGapResolver()
-                        } label: {
-                            Label("Resolve All Gaps", systemImage: "exclamationmark.triangle")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-            }
-            
-            if isSelectionMode && !selectedBlockIDs.isEmpty {
-                ToolbarItem(placement: .bottomBar) {
-                    HStack {
-                        Button("Merge") { mergeSelected() }
-                            .disabled(selectedBlockIDs.count < 2)
-                        
-                        Spacer()
-                        
-                        Text("\(selectedBlockIDs.count) selected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        
-                        Spacer()
-                    }
-                }
-            }
-        }
         .onAppear {
             conflictDetector = ConflictDetector(modelContext: modelContext)
             loadBlocks()
@@ -5284,7 +5237,7 @@ struct AuditListView: View {
             BlockEditSheet(
                 block: block,
                 conflictDetector: conflictDetector!,
-                onSave: { loadBlocks() },
+                onSave: { loadBlocks() }
             )
         }
         .sheet(item: $gapToResolve) { gap in
@@ -5327,6 +5280,64 @@ struct AuditListView: View {
             }
         }
         .listStyle(.plain)
+    }
+    
+    // MARK: - Bottom Toolbar
+    
+    private var bottomToolbar: some View {
+        HStack(spacing: 20) {
+            if isSelectionMode {
+                // Selection mode: Show merge and cancel
+                Button("Cancel") {
+                    isSelectionMode = false
+                    selectedBlockIDs.removeAll()
+                }
+                
+                Spacer()
+                
+                if !selectedBlockIDs.isEmpty {
+                    Text("\(selectedBlockIDs.count) selected")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    
+                    Spacer()
+                    
+                    Button("Merge") {
+                        mergeSelected()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedBlockIDs.count < 2)
+                }
+            } else {
+                // Normal mode: Show select and resolve all gaps buttons
+                if !gaps.isEmpty {
+                    Button {
+                        showBulkGapResolver()
+                    } label: {
+                        Label("Resolve All Gaps", systemImage: "exclamationmark.triangle.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                }
+                
+                Spacer()
+                
+                Button {
+                    isSelectionMode = true
+                } label: {
+                    Label("Select", systemImage: "checkmark.circle")
+                }
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundStyle(Color(.separator)),
+            alignment: .top
+        )
     }
     
     // MARK: - Actions

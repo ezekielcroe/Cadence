@@ -7,10 +7,13 @@
 
 import SwiftUI
 
+// MARK: - Audit Row (Updated with editability indicator)
+
 struct AuditRow: View {
     let block: TimeBlock
     let isSelected: Bool
     let isSelectionMode: Bool
+    let isEditable: Bool
     let onTap: () -> Void
     let onResolveGap: () -> Void
     
@@ -78,6 +81,12 @@ struct AuditRow: View {
                                 .cornerRadius(4)
                         }
                         
+                        if !isEditable {
+                            Image(systemName: "lock.fill")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                        
                         Spacer()
                         
                         if !block.remarks.isEmpty {
@@ -90,7 +99,7 @@ struct AuditRow: View {
                 
                 // Action indicator
                 if !isSelectionMode {
-                    if block.isGap {
+                    if block.isGap && isEditable {
                         Button(action: onResolveGap) {
                             Text("Resolve")
                                 .font(.caption)
@@ -128,6 +137,8 @@ struct AuditRow: View {
         return Color.clear
     }
 }
+
+// MARK: - Supporting Views
 
 struct GapBadge: View {
     var body: some View {
@@ -174,24 +185,26 @@ struct PauseBadge: View {
     )
     block.endTime = Date()
     
+    let gap = TimeBlock.createGap(
+        startTime: Date().addingTimeInterval(-1800),
+        endTime: Date()
+    )
+    
     return VStack {
         AuditRow(
             block: block,
             isSelected: false,
             isSelectionMode: false,
+            isEditable: true,
             onTap: {},
             onResolveGap: {}
-        )
-        
-        let gap = TimeBlock.createGap(
-            startTime: Date().addingTimeInterval(-1800),
-            endTime: Date()
         )
         
         AuditRow(
             block: gap,
             isSelected: false,
             isSelectionMode: false,
+            isEditable: true,
             onTap: {},
             onResolveGap: {}
         )

@@ -3,14 +3,15 @@
 //  Cadence
 //
 //  Created by Zhi Zheng Yeo on 29/1/26.
+//  UPDATED: Simplified to Day/Week/Month with better comparisons
 //
 
 import Foundation
 import SwiftData
 
-// MARK: - Top Level Structs (Moved out to fix inference errors)
+// MARK: - Top Level Structs
 struct ActivityChange: Identifiable, Hashable {
-    var id: String { name } // Conforms to Identifiable
+    var id: String { name }
     let name: String
     let change: TimeInterval
     let percentageChange: Double
@@ -20,39 +21,43 @@ struct ActivityChange: Identifiable, Hashable {
 class ReportGenerator {
     
     // MARK: - Report Types
-    enum ReportPeriod: Hashable, Equatable {
-        case thisWeek, lastWeek, thisMonth, lastMonth
-        case custom(start: Date, end: Date)
+    enum ReportPeriod: String, CaseIterable, Hashable, Equatable {
+        case day = "Day"
+        case week = "Week"
+        case month = "Month"
         
         var dateRange: (start: Date, end: Date) {
             let calendar = Calendar.current
             let now = Date()
+            
             switch self {
-            case .thisWeek:
-                let start = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
-                return (start, calendar.date(byAdding: .day, value: 7, to: start)!)
-            case .lastWeek:
-                let start = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
-                let lastStart = calendar.date(byAdding: .weekOfYear, value: -1, to: start)!
-                return (lastStart, start)
-            case .thisMonth:
-                let start = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-                return (start, calendar.date(byAdding: .month, value: 1, to: start)!)
-            case .lastMonth:
-                let start = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-                let lastStart = calendar.date(byAdding: .month, value: -1, to: start)!
-                return (lastStart, start)
-            case .custom(let s, let e): return (s, e)
+            case .day:
+                // Yesterday (full day)
+                let today = calendar.startOfDay(for: now)
+                let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+                return (yesterday, today)
+                
+            case .week:
+                // This week (Monday to today, or Sunday to today depending on locale)
+                let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
+                return (weekStart, now)
+                
+            case .month:
+                // This month (1st to today)
+                let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
+                return (monthStart, now)
             }
         }
         
         var displayName: String {
+            rawValue
+        }
+        
+        var comparisonDescription: String {
             switch self {
-            case .thisWeek: return "This Week"
-            case .lastWeek: return "Last Week"
-            case .thisMonth: return "This Month"
-            case .lastMonth: return "Last Month"
-            case .custom: return "Custom"
+            case .day: return "vs. Avg of Last 3 Days"
+            case .week: return "vs. Last Week"
+            case .month: return "vs. Last Month"
             }
         }
     }
@@ -73,7 +78,8 @@ class ReportGenerator {
             let previousTotalDuration: TimeInterval
             let durationChange: TimeInterval
             let percentageChange: Double
-            let activityChanges: [ActivityChange] // Uses the top-level struct
+            let activityChanges: [ActivityChange]
+            let comparisonLabel: String  // e.g., "Last Week", "3-Day Avg"
         }
     }
     
@@ -111,7 +117,12 @@ class ReportGenerator {
         // Goal Lookup
         let goalMap = Dictionary(activities.map { ($0.name, $0.goal) }, uniquingKeysWith: { (first, _) in first })
         
-        let comparison = calculateComparison(currentBlocks: periodBlocks, period: period, allBlocks: blocks, goalMap: goalMap)
+        let comparison = calculateComparison(
+            currentBlocks: periodBlocks,
+            period: period,
+            allBlocks: blocks,
+            goalMap: goalMap
+        )
         
         return Report(
             period: period,
@@ -126,33 +137,83 @@ class ReportGenerator {
         )
     }
     
-    private func calculateComparison(currentBlocks: [TimeBlock], period: ReportPeriod, allBlocks: [TimeBlock], goalMap: [String: ActivityGoal]) -> Report.ComparisonData? {
+    private func calculateComparison(
+        currentBlocks: [TimeBlock],
+        period: ReportPeriod,
+        allBlocks: [TimeBlock],
+        goalMap: [String: ActivityGoal]
+    ) -> Report.ComparisonData? {
         let (cStart, cEnd) = period.dateRange
-        let pEnd = cStart
-        let pStart: Date
+        let calendar = Calendar.current
         
-        // Calculate previous start
+        let (previousBlocks, comparisonLabel): ([TimeBlock], String)
+        
         switch period {
-        case .thisWeek, .lastWeek:
-            pStart = cStart.addingTimeInterval(-(cEnd.timeIntervalSince(cStart)))
-        case .thisMonth, .lastMonth:
-            pStart = Calendar.current.date(byAdding: .month, value: -1, to: cStart)!
-        case .custom:
-            pStart = cStart.addingTimeInterval(-(cEnd.timeIntervalSince(cStart)))
+        case .day:
+            // Compare yesterday to average of 3 days before
+            // Days: -4, -3, -2 (average)
+            let day2 = calendar.date(byAdding: .day, value: -2, to: cStart)!
+            let day3 = calendar.date(byAdding: .day, value: -3, to: cStart)!
+            let day4 = calendar.date(byAdding: .day, value: -4, to: cStart)!
+            
+            let blocks = allBlocks.filter { block in
+                (block.startTime >= day4 && block.startTime < day3) ||
+                (block.startTime >= day3 && block.startTime < day2) ||
+                (block.startTime >= day2 && block.startTime < cStart)
+            }
+            
+            previousBlocks = blocks
+            comparisonLabel = "3-Day Avg"
+            
+        case .week:
+            // Compare this week to last week
+            let lastWeekStart = calendar.date(byAdding: .weekOfYear, value: -1, to: cStart)!
+            let lastWeekEnd = cStart
+            
+            previousBlocks = allBlocks.filter { $0.startTime >= lastWeekStart && $0.startTime < lastWeekEnd }
+            comparisonLabel = "Last Week"
+            
+        case .month:
+            // Compare this month to last month
+            let lastMonthStart = calendar.date(byAdding: .month, value: -1, to: cStart)!
+            let lastMonthEnd = cStart
+            
+            previousBlocks = allBlocks.filter { $0.startTime >= lastMonthStart && $0.startTime < lastMonthEnd }
+            comparisonLabel = "Last Month"
         }
         
-        let prevBlocks = allBlocks.filter { $0.startTime >= pStart && $0.startTime < pEnd }
-        if prevBlocks.isEmpty { return nil }
+        guard !previousBlocks.isEmpty else { return nil }
         
-        let prevDur = prevBlocks.reduce(0) { $0 + $1.duration }
+        // For day view, we need to average the 3 days
+        let prevDur: TimeInterval
+        if period == .day {
+            let totalPrevDur = previousBlocks.reduce(0) { $0 + $1.duration }
+            prevDur = totalPrevDur / 3.0  // Average of 3 days
+        } else {
+            prevDur = previousBlocks.reduce(0) { $0 + $1.duration }
+        }
+        
         let currDur = currentBlocks.reduce(0) { $0 + $1.duration }
         let diff = currDur - prevDur
         
         // Activity Changes
         var cMap: [String: TimeInterval] = [:]
         var pMap: [String: TimeInterval] = [:]
-        for b in currentBlocks { cMap[b.activityName, default: 0] += b.duration }
-        for b in prevBlocks { pMap[b.activityName, default: 0] += b.duration }
+        
+        for b in currentBlocks {
+            cMap[b.activityName, default: 0] += b.duration
+        }
+        
+        for b in previousBlocks {
+            pMap[b.activityName, default: 0] += b.duration
+        }
+        
+        // For day view, average the previous activities
+        if period == .day {
+            for key in pMap.keys {
+                pMap[key] = (pMap[key] ?? 0) / 3.0
+            }
+        }
         
         let allNames = Set(cMap.keys).union(pMap.keys)
         let changes: [ActivityChange] = allNames.map { name in
@@ -160,18 +221,39 @@ class ReportGenerator {
             let p = pMap[name] ?? 0
             let chg = c - p
             let pct = p > 0 ? (chg/p)*100 : (c > 0 ? 100 : 0)
-            return ActivityChange(name: name, change: chg, percentageChange: pct, goal: goalMap[name] ?? .neutral)
+            return ActivityChange(
+                name: name,
+                change: chg,
+                percentageChange: pct,
+                goal: goalMap[name] ?? .neutral
+            )
         }.sorted { abs($0.change) > abs($1.change) }
         
         return Report.ComparisonData(
             previousTotalDuration: prevDur,
             durationChange: diff,
             percentageChange: prevDur > 0 ? (diff/prevDur)*100 : 0,
-            activityChanges: changes
+            activityChanges: changes,
+            comparisonLabel: comparisonLabel
         )
     }
     
     func formatReportAsText(_ report: Report) -> String {
-        return "Report for \(report.period.displayName)\nTotal: \(report.totalDuration.formattedDuration)"
+        var text = "Report for \(report.period.displayName)\n"
+        text += "Total: \(report.totalDuration.formattedDuration)\n"
+        text += "Activities: \(report.totalBlocks)\n\n"
+        
+        if let comparison = report.comparisonToPrevious {
+            text += "Comparison to \(comparison.comparisonLabel):\n"
+            text += "Change: \(comparison.durationChange.formattedDuration) "
+            text += "(\(String(format: "%.1f", comparison.percentageChange))%)\n\n"
+        }
+        
+        text += "Top Activities:\n"
+        for (name, duration) in report.topActivities {
+            text += "- \(name): \(duration.formattedDuration)\n"
+        }
+        
+        return text
     }
 }

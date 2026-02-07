@@ -1,6 +1,8 @@
 //
-//  RecordsView.swift
+//  RecordsView.swift (Combined Timeline View)
 //  Cadence
+//
+//  Merged RecordsView + AuditListView for streamlined editing
 //
 
 import SwiftUI
@@ -17,17 +19,25 @@ struct RecordsView: View {
     @State private var hidePauses = false
     @State private var showArchived = false
     
-    // Navigation / Sheets
+    // Edit state
     @State private var selectedBlock: TimeBlock?
+    @State private var conflictDetector: ConflictDetector?
+    @State private var gapToResolve: TimeBlock?
     
-    // Audit navigation
-    @State private var timelineDate: Date?
-    @State private var showingTimeline = false
+    // Multi-select for bulk operations
+    @State private var isSelectionMode = false
+    @State private var selectedBlockIDs: Set<UUID> = []
     
     // Collapsed sections state
     @State private var collapsedSections: Set<String> = []
     
     // MARK: - Computed Properties
+    
+    private let editCutoffDays = 3
+    
+    private var editCutoffDate: Date {
+        Calendar.current.date(byAdding: .day, value: -editCutoffDays, to: Date())!
+    }
     
     var filteredBlocks: [TimeBlock] {
         var blocks = allTimeBlocks
@@ -90,12 +100,25 @@ struct RecordsView: View {
                     recordsList
                 }
             }
-            .navigationTitle("Records")
+            .navigationTitle("Timeline")
             .searchable(text: $searchText, prompt: "Search remarks")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Toggle("Hide Pauses", isOn: $hidePauses)
+                        
+                        if isSelectionMode {
+                            Divider()
+                            Button("Cancel Selection") {
+                                isSelectionMode = false
+                                selectedBlockIDs.removeAll()
+                            }
+                        } else {
+                            Button(action: { isSelectionMode = true }) {
+                                Label("Select Blocks", systemImage: "checkmark.circle")
+                            }
+                        }
+                        
                         Divider()
                         Button(action: { showingFilters.toggle() }) {
                             Label("Filters", systemImage: "line.3.horizontal.decrease.circle")
@@ -108,15 +131,27 @@ struct RecordsView: View {
             .sheet(isPresented: $showingFilters) {
                 FiltersView(selectedActivity: $selectedActivity, activities: uniqueActivities)
             }
-            .sheet(isPresented: $showingTimeline) {
-                TimelineSheetView(date: timelineDate ?? Date())
-                    .onDisappear {
-                        timelineDate = nil  // Clean up
-                    }
-            }
-
             .sheet(item: $selectedBlock) { block in
-                RecordDetailView(block: block)
+                let isEditable = block.startTime >= editCutoffDate
+                
+                if isEditable {
+                    BlockEditSheet(
+                        block: block,
+                        conflictDetector: conflictDetector!,
+                        onSave: { }
+                    )
+                } else {
+                    ReadOnlyBlockDetail(block: block)
+                }
+            }
+            .sheet(item: $gapToResolve) { gap in
+                GapResolverSheet(
+                    gap: gap,
+                    onResolved: { }
+                )
+            }
+            .onAppear {
+                conflictDetector = ConflictDetector(modelContext: modelContext)
             }
         }
     }
@@ -124,90 +159,112 @@ struct RecordsView: View {
     // MARK: - Subviews
     
     private var recordsList: some View {
-        List {
-            // Collapsible date sections
-            ForEach(groupedBlocks, id: \.section) { group in
-                Section {
-                    if !collapsedSections.contains(group.section.id) {
-                        ForEach(group.blocks) { block in
-                            Button {
-                                selectedBlock = block
-                            } label: {
-                                RecordRowCompact(block: block)
+        VStack(spacing: 0) {
+            List {
+                // Collapsible date sections
+                ForEach(groupedBlocks, id: \.section) { group in
+                    Section {
+                        if !collapsedSections.contains(group.section.id) {
+                            // Day Summary
+                            DaySummaryBar(
+                                date: group.blocks.first?.startTime ?? Date(),
+                                totalTracked: totalTracked(for: group.blocks),
+                                gapCount: gaps(in: group.blocks).count,
+                                totalGapTime: totalGapTime(for: group.blocks),
+                                onResolveAllGaps: { }
+                            )
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            
+                            // Blocks
+                            ForEach(group.blocks) { block in
+                                let isEditable = block.startTime >= editCutoffDate
+                                
+                                AuditRow(
+                                    block: block,
+                                    isSelected: selectedBlockIDs.contains(block.id),
+                                    isSelectionMode: isSelectionMode,
+                                    isEditable: isEditable,
+                                    onTap: {
+                                        if isSelectionMode {
+                                            toggleSelection(block)
+                                        } else {
+                                            selectedBlock = block
+                                        }
+                                    },
+                                    onResolveGap: {
+                                        gapToResolve = block
+                                    }
+                                )
+                                .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                             }
-                            .buttonStyle(.plain)
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button {
-                                    timelineDate = block.startTime
-                                    showingTimeline = true
-                                } label: {
-                                    Label("Timeline", systemImage: "chart.bar.xaxis")
-                                }
-                                .tint(.purple)
+                        }
+                    } header: {
+                        sectionHeader(for: group.section, blocks: group.blocks)
+                    }
+                }
+                
+                // Archive toggle at bottom
+                if archivedCount > 0 {
+                    Section {
+                        Button {
+                            withAnimation { showArchived.toggle() }
+                        } label: {
+                            HStack {
+                                Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
+                                    .foregroundColor(.orange)
+                                Text(showArchived ? "Hide Archived Records" : "Show Archived Records (\(archivedCount))")
+                                Spacer()
                             }
                         }
                     }
-                } header: {
-                    sectionHeader(for: group.section, blocks: group.blocks)
                 }
             }
+            .listStyle(.insetGrouped)
             
-            // Archive toggle at bottom
-            if archivedCount > 0 {
-                Section {
-                    Button {
-                        withAnimation { showArchived.toggle() }
-                    } label: {
-                        HStack {
-                            Image(systemName: showArchived ? "archivebox.fill" : "archivebox")
-                                .foregroundColor(.orange)
-                            Text(showArchived ? "Hide Archived Records" : "Show Archived Records (\(archivedCount))")
-                            Spacer()
-                        }
-                    }
-                }
+            // Bottom toolbar (only in selection mode)
+            if isSelectionMode {
+                bottomToolbar
             }
         }
-        .listStyle(.insetGrouped)
     }
     
     private func sectionHeader(for section: DateSection, blocks: [TimeBlock]) -> some View {
-        HStack {
-            Button {
-                withAnimation {
-                    if collapsedSections.contains(section.id) {
-                        collapsedSections.remove(section.id)
-                    } else {
-                        collapsedSections.insert(section.id)
-                    }
-                }
-            } label: {
-                HStack {
-                    Image(systemName: section.icon)
-                        .font(.subheadline)
-                    Text(section.rawValue)
-                        .font(.headline)
-                    Image(systemName: collapsedSections.contains(section.id) ? "chevron.right" : "chevron.down")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        Button {
+            withAnimation {
+                if collapsedSections.contains(section.id) {
+                    collapsedSections.remove(section.id)
+                } else {
+                    collapsedSections.insert(section.id)
                 }
             }
-            .buttonStyle(.plain)
-            
-            Spacer()
-            
-            Button {
-                timelineDate = blocks.first?.startTime ?? Date()
-                showingTimeline = true
-            } label: {
-                Image(systemName: "chart.bar.xaxis")
-                    .foregroundStyle(.purple)
-                    .padding(6)
-                    .background(Color.purple.opacity(0.1))
-                    .clipShape(Circle())
+        } label: {
+            HStack {
+                Image(systemName: section.icon)
+                    .font(.subheadline)
+                    .foregroundStyle(section.iconColor)
+                
+                Text(section.rawValue)
+                    .font(.headline)
+                
+                Image(systemName: collapsedSections.contains(section.id) ? "chevron.right" : "chevron.down")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                Spacer()
+                
+                // Quick stats badge
+                Text("\(blocks.count)")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(section.iconColor)
+                    .clipShape(Capsule())
             }
-            .buttonStyle(.plain)
         }
+        .buttonStyle(.plain)
     }
     
     private var archivePromptView: some View {
@@ -235,9 +292,94 @@ struct RecordsView: View {
         }
         .padding()
     }
+    
+    private var bottomToolbar: some View {
+        HStack(spacing: 20) {
+            Button("Cancel") {
+                isSelectionMode = false
+                selectedBlockIDs.removeAll()
+            }
+            
+            Spacer()
+            
+            if !selectedBlockIDs.isEmpty {
+                Text("\(selectedBlockIDs.count) selected")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                
+                Spacer()
+                
+                Button("Merge") {
+                    mergeSelected()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedBlockIDs.count < 2)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+        .overlay(
+            Rectangle()
+                .frame(height: 1)
+                .foregroundStyle(Color(.separator)),
+            alignment: .top
+        )
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func totalTracked(for blocks: [TimeBlock]) -> TimeInterval {
+        blocks.filter { !$0.isGap && !$0.isPauseBlock }
+            .reduce(0) { $0 + $1.duration }
+    }
+    
+    private func gaps(in blocks: [TimeBlock]) -> [TimeBlock] {
+        blocks.filter { $0.isGap }
+    }
+    
+    private func totalGapTime(for blocks: [TimeBlock]) -> TimeInterval {
+        gaps(in: blocks).reduce(0) { $0 + $1.duration }
+    }
+    
+    private func toggleSelection(_ block: TimeBlock) {
+        if selectedBlockIDs.contains(block.id) {
+            selectedBlockIDs.remove(block.id)
+        } else {
+            selectedBlockIDs.insert(block.id)
+        }
+    }
+    
+    private func mergeSelected() {
+        let toMerge = filteredBlocks
+            .filter { selectedBlockIDs.contains($0.id) }
+            .sorted { $0.startTime < $1.startTime }
+        
+        guard toMerge.count >= 2 else { return }
+        
+        let editor = TimeBlockEditor(modelContext: modelContext)
+        guard editor.canMerge(toMerge) else { return }
+        
+        let targetActivity = findActivity(for: toMerge.first!)
+        
+        do {
+            try editor.mergeBlocks(toMerge, intoActivity: targetActivity)
+            selectedBlockIDs.removeAll()
+            isSelectionMode = false
+        } catch {
+            print("Merge failed: \(error)")
+        }
+    }
+    
+    private func findActivity(for block: TimeBlock) -> Activity? {
+        guard let activityID = block.activityID else { return nil }
+        let descriptor = FetchDescriptor<Activity>(
+            predicate: #Predicate { $0.id == activityID }
+        )
+        return try? modelContext.fetch(descriptor).first
+    }
 }
 
-// MARK: - Date Section Enum
+// MARK: - Date Section Enum (Enhanced)
 
 enum DateSection: String, CaseIterable, Identifiable {
     case today = "Today"
@@ -290,78 +432,201 @@ enum DateSection: String, CaseIterable, Identifiable {
         case .lastYear, .older: return "archivebox"
         }
     }
+    
+    var iconColor: Color {
+        switch self {
+        case .today: return .orange
+        case .yesterday: return .blue
+        case .twoDaysAgo, .threeDaysAgo: return .purple
+        case .fourDaysAgo, .fiveDaysAgo, .sixDaysAgo, .lastWeek: return .green
+        case .lastMonth, .lastThreeMonths: return .cyan
+        case .lastSixMonths, .lastYear, .older: return .gray
+        }
+    }
 }
 
-// MARK: - Record Row
+struct DaySummaryBar: View {
+    let date: Date
+    let totalTracked: TimeInterval
+    let gapCount: Int
+    let totalGapTime: TimeInterval
+    let onResolveAllGaps: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 20) {
+                StatPill(
+                    icon: "clock.fill",
+                    label: "Tracked",
+                    value: totalTracked.formattedDuration,
+                    color: .blue
+                )
+                
+                if gapCount > 0 {
+                    StatPill(
+                        icon: "exclamationmark.triangle.fill",
+                        label: "\(gapCount) Gap\(gapCount == 1 ? "" : "s")",
+                        value: totalGapTime.formattedDuration,
+                        color: .orange
+                    )
+                } else {
+                    StatPill(
+                        icon: "checkmark.circle.fill",
+                        label: "Gaps",
+                        value: "None",
+                        color: .green
+                    )
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+    }
+}
 
-struct RecordRowCompact: View {
+struct StatPill: View {
+    let icon: String
+    let label: String
+    let value: String
+    let color: Color
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .foregroundStyle(color)
+            
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(color.opacity(0.1))
+        .cornerRadius(8)
+    }
+}
+
+// MARK: - Read-Only Block Detail
+
+struct ReadOnlyBlockDetail: View {
+    @Environment(\.dismiss) private var dismiss
     let block: TimeBlock
     
     var body: some View {
-        HStack(spacing: 12) {
-            Circle()
-                .fill(Color(block.activityColor))
-                .frame(width: 10, height: 10)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(block.displayName)
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    
-                    if block.isGap {
-                        Text("Gap")
-                            .font(.caption2)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Color.gray.opacity(0.2))
-                            .cornerRadius(3)
-                    } else if block.isPauseBlock {
-                        Text("Pause")
-                            .font(.caption2)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.2))
-                            .cornerRadius(3)
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 24) {
+                    // Lock notice
+                    HStack {
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Read-Only")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Text("Records older than 3 days cannot be edited")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
                     }
-                }
-                
-                HStack(spacing: 8) {
-                    HStack(spacing: 4) {
-                        Text(block.startTime, style: .time)
-                        Text("→")
+                    .padding()
+                    .background(Color.orange.opacity(0.1))
+                    .cornerRadius(12)
+                    
+                    // Block details
+                    VStack(spacing: 16) {
+                        HStack {
+                            Circle()
+                                .fill(Color(block.activityColor))
+                                .frame(width: 40, height: 40)
+                            
+                            VStack(alignment: .leading) {
+                                Text(block.displayName)
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                
+                                Text(block.blockType.capitalized)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        
+                        VStack(spacing: 4) {
+                            Text(block.duration.detailedFormattedDuration)
+                                .font(.system(size: 48, weight: .bold, design: .rounded))
+                                .monospacedDigit()
+                            Text("Duration")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(block.activityColor).opacity(0.1))
+                        .cornerRadius(12)
+                    }
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(16)
+                    
+                    // Time details
+                    VStack(spacing: 12) {
+                        DetailRow(label: "Started", value: block.startTime.formatted(date: .abbreviated, time: .shortened), icon: "clock")
+                        
                         if let endTime = block.endTime {
-                            Text(endTime, style: .time)
-                        } else {
-                            Text("now")
+                            DetailRow(label: "Ended", value: endTime.formatted(date: .abbreviated, time: .shortened), icon: "clock.fill")
                         }
                     }
-                    .font(.caption)
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .cornerRadius(16)
                     
-                    Text("•").font(.caption2)
-                    
-                    Text(block.duration.formattedDuration)
-                        .font(.caption)
-                        .monospacedDigit()
+                    // Remarks
+                    if !block.remarks.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label("Remarks", systemImage: "note.text").font(.headline)
+                            Text(block.remarks)
+                                .font(.body)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(12)
+                        }
+                        .padding()
+                    }
                 }
-                .foregroundStyle(.secondary)
-                
-                if !block.remarks.isEmpty {
-                    Text(block.remarks)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .padding(.top, 2)
+                .padding()
+            }
+            .navigationTitle("Record Details")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
                 }
             }
-            
-            Spacer()
-            
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
         }
-        .padding(.vertical, 4)
+    }
+}
+
+struct DetailRow: View {
+    let label: String
+    let value: String
+    let icon: String
+    var valueColor: Color = .primary
+    
+    var body: some View {
+        HStack {
+            Label(label, systemImage: icon).foregroundColor(.secondary)
+            Spacer()
+            Text(value).fontWeight(.medium).foregroundColor(valueColor)
+        }
     }
 }
 
@@ -392,206 +657,6 @@ struct FiltersView: View {
                 }
             }
         }
-    }
-}
-
-// Helper view for TimelineSheet
-
-struct TimelineSheetView: View {
-    @Environment(\.dismiss) private var dismiss
-    let date: Date
-    
-    private var isEditable: Bool {
-        let threeDaysAgo = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
-        return date >= threeDaysAgo
-    }
-    
-    var body: some View {
-        NavigationStack {
-            if isEditable {
-                AuditListView(date: date)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") {
-                                dismiss()
-                            }
-                        }
-                    }
-            } else {
-                ReadOnlyTimelineView(date: date)
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") {
-                                dismiss()
-                            }
-                        }
-                    }
-            }
-        }
-    }
-}
-
-// MARK: - Read-Only Timeline View
-
-struct ReadOnlyTimelineView: View {
-    @Environment(\.modelContext) private var modelContext
-    let date: Date
-    
-    @State private var blocks: [TimeBlock] = []
-    
-    private var sortedBlocks: [TimeBlock] {
-        blocks.sorted { $0.startTime < $1.startTime }
-    }
-    
-    private var totalTracked: TimeInterval {
-        blocks.filter { !$0.isGap && !$0.isPauseBlock }
-            .reduce(0) { $0 + $1.duration }
-    }
-    
-    private var gaps: [TimeBlock] {
-        blocks.filter { $0.isGap }
-    }
-    
-    private var totalGapTime: TimeInterval {
-        gaps.reduce(0) { $0 + $1.duration }
-    }
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // Info banner
-            HStack {
-                Image(systemName: "lock.fill")
-                    .foregroundStyle(.orange)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Read-Only Mode")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    Text("Timeline cannot be edited after 3 days")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .padding()
-            .background(Color.orange.opacity(0.1))
-            
-            // Summary (same as AuditListView)
-            DaySummaryBar(
-                date: date,
-                totalTracked: totalTracked,
-                gapCount: gaps.count,
-                totalGapTime: totalGapTime,
-                onResolveAllGaps: { } // No-op in read-only mode
-            )
-            
-            if blocks.isEmpty {
-                ContentUnavailableView(
-                    "No Activities",
-                    systemImage: "clock",
-                    description: Text("No time blocks recorded for this day")
-                )
-            } else {
-                List {
-                    ForEach(sortedBlocks) { block in
-                        ReadOnlyBlockRow(block: block)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                    }
-                }
-                .listStyle(.plain)
-            }
-        }
-        .navigationTitle(date.formatted(date: .abbreviated, time: .omitted))
-        .onAppear {
-            loadBlocks()
-        }
-    }
-    
-    private func loadBlocks() {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-        let dayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
-        
-        let descriptor = FetchDescriptor<TimeBlock>(
-            predicate: #Predicate { block in
-                block.startTime >= dayStart && block.startTime < dayEnd
-            },
-            sortBy: [SortDescriptor(\.startTime)]
-        )
-        
-        blocks = (try? modelContext.fetch(descriptor)) ?? []
-    }
-}
-
-// MARK: - Read-Only Block Row
-
-struct ReadOnlyBlockRow: View {
-    let block: TimeBlock
-    
-    private var timeRange: String {
-        let start = block.startTime.formatted(date: .omitted, time: .shortened)
-        if let end = block.endTime {
-            let endStr = end.formatted(date: .omitted, time: .shortened)
-            return "\(start) → \(endStr)"
-        }
-        return "\(start) → now"
-    }
-    
-    var body: some View {
-        HStack(spacing: 12) {
-            // Color indicator
-            RoundedRectangle(cornerRadius: 4)
-                .fill(Color(block.activityColor))
-                .frame(width: 4, height: 44)
-            
-            // Main content
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(block.displayName)
-                        .font(.body)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.primary)
-                    
-                    if block.isGap {
-                        GapBadge()
-                    } else if block.isPauseBlock {
-                        PauseBadge()
-                    }
-                    
-                    Spacer()
-                    
-                    Text(block.duration.formattedDuration)
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
-                        .foregroundStyle(.primary)
-                }
-                
-                HStack {
-                    Text(timeRange)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                    
-                    if !block.remarks.isEmpty {
-                        Text("•").font(.caption2)
-                        Text(block.remarks.split(separator: "\n").first ?? "")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
-            
-            // Lock icon (read-only)
-            Image(systemName: "lock.fill")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 4)
-        .background(Color.clear)
     }
 }
 
