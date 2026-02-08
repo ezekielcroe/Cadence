@@ -297,21 +297,23 @@ struct BlockEditSheet: View {
     /// Allowed range for start time (from previous activity's end to current end)
     private var allowedStartRange: ClosedRange<Date> {
         let (prev, _) = getAdjacentActivityBlocks(for: block)
-        
+
         let earliest = prev?.endTime ?? Calendar.current.startOfDay(for: block.startTime)
         let latest = editedEndTime
-        
-        return earliest...latest
+
+        // FIX: Ensure latest is never smaller than earliest
+        return earliest...max(earliest, latest)
     }
 
     /// Allowed range for end time (from current start to next activity's start)
     private var allowedEndRange: ClosedRange<Date> {
         let (_, next) = getAdjacentActivityBlocks(for: block)
-        
+
         let earliest = editedStartTime
         let latest = next?.startTime ?? Calendar.current.date(byAdding: .day, value: 1, to: block.startTime)!
-        
-        return earliest...latest
+
+        // FIX: Ensure latest is never smaller than earliest
+        return earliest...max(earliest, latest)
     }
     
     // MARK: - Actions

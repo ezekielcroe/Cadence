@@ -2,8 +2,7 @@
 //  RecordsView.swift (Combined Timeline View)
 //  Cadence
 //
-//  Merged RecordsView + AuditListView for streamlined editing
-//
+// View and edit records
 
 import SwiftUI
 import SwiftData
@@ -27,6 +26,10 @@ struct RecordsView: View {
     // Multi-select for bulk operations
     @State private var isSelectionMode = false
     @State private var selectedBlockIDs: Set<UUID> = []
+    
+    // Error Handling state [NEW]
+    @State private var showingMergeError = false
+    @State private var mergeErrorMessage = ""
     
     // Collapsed sections state
     @State private var collapsedSections: Set<String> = []
@@ -135,9 +138,11 @@ struct RecordsView: View {
                 let isEditable = block.startTime >= editCutoffDate
                 
                 if isEditable {
+                    // FIX: Safely unwrap or create new detector
+                    let detector = conflictDetector ?? ConflictDetector(modelContext: modelContext)
                     BlockEditSheet(
                         block: block,
-                        conflictDetector: conflictDetector!,
+                        conflictDetector: detector,
                         onSave: { }
                     )
                 } else {
@@ -149,6 +154,12 @@ struct RecordsView: View {
                     gap: gap,
                     onResolved: { }
                 )
+            }
+            // [NEW] Alert for merge errors
+            .alert("Cannot Merge", isPresented: $showingMergeError) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(mergeErrorMessage)
             }
             .onAppear {
                 conflictDetector = ConflictDetector(modelContext: modelContext)
@@ -356,8 +367,21 @@ struct RecordsView: View {
         
         guard toMerge.count >= 2 else { return }
         
+        // [UPDATED] Check 1: Ensure no active blocks (block with nil endTime)
+        if toMerge.contains(where: { $0.endTime == nil }) {
+            mergeErrorMessage = "You cannot merge an active/ongoing activity. Please stop the activity first."
+            showingMergeError = true
+            return
+        }
+        
         let editor = TimeBlockEditor(modelContext: modelContext)
-        guard editor.canMerge(toMerge) else { return }
+        
+        // [UPDATED] Check 2: Check connectivity/adjacency with feedback
+        guard editor.canMerge(toMerge) else {
+            mergeErrorMessage = "Selected blocks must be adjacent to merge (no gaps between them)."
+            showingMergeError = true
+            return
+        }
         
         let targetActivity = findActivity(for: toMerge.first!)
         
@@ -366,7 +390,9 @@ struct RecordsView: View {
             selectedBlockIDs.removeAll()
             isSelectionMode = false
         } catch {
-            print("Merge failed: \(error)")
+            // [UPDATED] Catch internal editor errors and show them
+            mergeErrorMessage = "Merge failed: \(error.localizedDescription)"
+            showingMergeError = true
         }
     }
     
