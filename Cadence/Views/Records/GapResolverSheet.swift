@@ -287,7 +287,7 @@ struct ActivityQuickButton: View {
                         .font(.title3)
                 } else {
                     Circle()
-                        .fill(Color(activity.color))
+                        .fill(Color(hex: activity.color))
                         .frame(width: 16, height: 16)
                 }
                 

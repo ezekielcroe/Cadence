@@ -570,7 +570,7 @@ struct ReadOnlyBlockDetail: View {
                     VStack(spacing: 16) {
                         HStack {
                             Circle()
-                                .fill(Color(block.activityColor))
+                                .fill(Color(hex: block.activityColor))
                                 .frame(width: 40, height: 40)
                             
                             VStack(alignment: .leading) {

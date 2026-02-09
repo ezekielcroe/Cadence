@@ -61,7 +61,7 @@ struct AddBlockSheet: View {
                                 Text(emoji)
                             }
                             Circle()
-                                .fill(Color(activity.color))
+                                .fill(Color(hex: activity.color))
                                 .frame(width: 20, height: 20)
                             Text(activity.name)
                             Spacer()
@@ -80,7 +80,7 @@ struct AddBlockSheet: View {
                                         Text(emoji)
                                     }
                                     Circle()
-                                        .fill(Color(activity.color))
+                                        .fill(Color(hex: activity.color))
                                         .frame(width: 16, height: 16)
                                     Text(activity.name)
                                         .foregroundStyle(.primary)

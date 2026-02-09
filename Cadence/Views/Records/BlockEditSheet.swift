@@ -152,7 +152,7 @@ struct BlockEditSheet: View {
     private var currentStatusView: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(Color(block.activityColor))
+                .fill(Color(hex: block.activityColor))
                 .frame(width: 40, height: 40)
                 .overlay {
                     if block.isGap {
@@ -203,7 +203,7 @@ struct BlockEditSheet: View {
                     }
                     
                     Circle()
-                        .fill(Color(activity.color))
+                        .fill(Color(hex: activity.color))
                         .frame(width: 20, height: 20)
                     
                     Text(activity.name)
@@ -586,7 +586,7 @@ struct ActivityPickerSheet: View {
                                     } else {
                                         // Fallback to colored circle
                                         Circle()
-                                            .fill(Color(activity.color))
+                                            .fill(Color(hex: activity.color))
                                             .frame(width: 20, height: 20)
                                             .frame(width: 32)
                                     }

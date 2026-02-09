@@ -47,7 +47,7 @@ struct SplitBlockSheet: View {
                 Section {
                     HStack {
                         Circle()
-                            .fill(Color(block.activityColor))
+                            .fill(Color(hex: block.activityColor))
                             .frame(width: 24, height: 24)
                         
                         VStack(alignment: .leading) {

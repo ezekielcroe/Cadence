@@ -250,8 +250,9 @@ struct ActivitySetDetailView: View {
                                     .font(.title3)
                             }
                             
+                            // FIX: Use Color(hex:) here
                             Circle()
-                                .fill(Color(activity.color))
+                                .fill(Color(hex: activity.color))
                                 .frame(width: 24, height: 24)
                             
                             Text(activity.name)
@@ -361,7 +362,7 @@ struct AddActivityView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(header: Text("Details"), footer: Text("Tap 🌐 on keyboard to add emoji for easier identification")) {
+                Section(header: Text("Details"), footer: Text("Add an emoji for easier identification")) {
                     TextField("Emoji (optional)", text: $emoji)
                         .onChange(of: emoji) { _, newValue in
                             if newValue.count > 2 {
@@ -374,7 +375,6 @@ struct AddActivityView: View {
                     TextField("Activity Name", text: $name)
                 }
                 
-                // FIXED: Use explicit header/footer to fix compilation error
                 Section(header: Text("Productivity Goal"), footer: Text("Helps reports determine if an increase in duration is good or bad.")) {
                     Picker("Goal", selection: $selectedGoal) {
                         ForEach(ActivityGoal.allCases, id: \.self) { goal in
@@ -388,12 +388,12 @@ struct AddActivityView: View {
                     .pickerStyle(.menu)
                 }
                 
-                // FIXED: Explicit header for Color section
                 Section(header: Text("Color")) {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {
                         ForEach(availableColors, id: \.self) { color in
+                            // FIX: Use Color(hex:) here
                             Circle()
-                                .fill(Color(color))
+                                .fill(Color(hex: color))
                                 .frame(width: 44, height: 44)
                                 .overlay(
                                     Circle()
@@ -459,7 +459,7 @@ struct ActivityEditView: View {
     
     var body: some View {
         Form {
-            Section(header: Text("Details"), footer: Text("Tap 🌐 on keyboard to add emoji for easier identification")) {
+            Section(header: Text("Details"), footer: Text("Add an emoji for easier identification")) {
                 TextField("Emoji (optional)", text: Binding(
                     get: { activity.emoji ?? "" },
                     set: { newValue in
@@ -473,7 +473,6 @@ struct ActivityEditView: View {
                 TextField("Activity Name", text: $activity.name)
             }
             
-            // FIXED: Explicit header/footer
             Section(header: Text("Productivity Goal"), footer: Text("Helps reports determine if an increase in duration is good or bad.")) {
                 Picker("Goal", selection: $activity.goal) {
                     ForEach(ActivityGoal.allCases, id: \.self) { goal in
@@ -487,12 +486,12 @@ struct ActivityEditView: View {
                 .pickerStyle(.menu)
             }
             
-            // FIXED: Explicit header
             Section(header: Text("Color")) {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 12) {
                     ForEach(availableColors, id: \.self) { color in
+                        // FIX: Use Color(hex:) here
                         Circle()
-                            .fill(Color(color))
+                            .fill(Color(hex: color))
                             .frame(width: 44, height: 44)
                             .overlay(
                                 Circle()

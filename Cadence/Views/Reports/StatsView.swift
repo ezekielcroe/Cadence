@@ -251,7 +251,7 @@ struct TimelineChart: View {
                     let duration = end.timeIntervalSince(start) / 86400
                     
                     Rectangle()
-                        .fill(Color(block.activityColor))
+                        .fill(Color(hex: block.activityColor))
                         .frame(width: geometry.size.width * duration)
                         .offset(x: geometry.size.width * startOffset)
                 }

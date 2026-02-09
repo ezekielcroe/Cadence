@@ -38,7 +38,7 @@ struct AuditRow: View {
                 
                 // Color indicator
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(block.activityColor))
+                    .fill(Color(hex: block.activityColor))
                     .frame(width: 4, height: 44)
                 
                 // Main content
