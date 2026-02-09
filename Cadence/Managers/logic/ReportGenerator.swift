@@ -1,257 +1,292 @@
-//
-//  ReportGenerator.swift
-//  Cadence
-//
-//  Created by Zhi Zheng Yeo on 29/1/26.
-//  UPDATED: Simplified to Day/Week/Month with better comparisons
-//
-
 import Foundation
 import SwiftData
 
-// MARK: - Top Level Structs
-struct ActivityChange: Identifiable, Hashable {
+// MARK: - Global Helper Structs
+// Moved outside ReportGenerator so ReportsView can access it directly
+struct ActivityChange: Identifiable {
     var id: String { name }
     let name: String
-    let change: TimeInterval
-    let percentageChange: Double
+    let currentDuration: TimeInterval
+    let previousDuration: TimeInterval
     let goal: ActivityGoal
+    
+    var change: TimeInterval { currentDuration - previousDuration }
 }
 
 class ReportGenerator {
     
     // MARK: - Report Types
-    enum ReportPeriod: String, CaseIterable, Hashable, Equatable {
-        case day = "Day"
-        case week = "Week"
-        case month = "Month"
+    enum ReportPeriod: String, CaseIterable, Hashable {
+        case day = "Yesterday"
+        case week = "Last Week"
+        case month = "Month (MTD)"
         
-        var dateRange: (start: Date, end: Date) {
-            let calendar = Calendar.current
-            let now = Date()
-            
-            switch self {
-            case .day:
-                // Yesterday (full day)
-                let today = calendar.startOfDay(for: now)
-                let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-                return (yesterday, today)
-                
-            case .week:
-                // This week (Monday to today, or Sunday to today depending on locale)
-                let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
-                return (weekStart, now)
-                
-            case .month:
-                // This month (1st to today)
-                let monthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-                return (monthStart, now)
-            }
-        }
-        
-        var displayName: String {
-            rawValue
-        }
+        var displayName: String { rawValue }
         
         var comparisonDescription: String {
             switch self {
-            case .day: return "vs. Avg of Last 3 Days"
-            case .week: return "vs. Last Week"
-            case .month: return "vs. Last Month"
+            case .day: return "vs. 7-Day Average"
+            case .week: return "vs. 2 Weeks Ago"
+            case .month: return "vs. Last Month (Same Days)"
             }
         }
     }
     
-    // MARK: - Report Structure
+    // MARK: - Report Data Structures
     struct Report {
         let period: ReportPeriod
+        let dateRange: String // e.g., "Oct 12 - Oct 18"
+        
         let totalDuration: TimeInterval
+        let unaccountedDuration: TimeInterval // ✅ ADDED: Fixes the error in ReportsView
         let totalBlocks: Int
-        let totalSwitches: Int
-        let activityBreakdown: [(name: String, duration: TimeInterval, percentage: Double, color: String)]
-        let dailyTotals: [(date: Date, duration: TimeInterval)]
+        let activityBreakdown: [ActivityBreakdown]
         let comparisonToPrevious: ComparisonData?
-        let topActivities: [(name: String, duration: TimeInterval)]
-        let mostProductiveDay: (date: Date, duration: TimeInterval)?
+        let topActivities: [ActivityBreakdown]
+        
+        struct ActivityBreakdown: Identifiable {
+            var id: String { name }
+            let name: String
+            let duration: TimeInterval
+            let percentage: Double
+            let color: String
+        }
         
         struct ComparisonData {
-            let previousTotalDuration: TimeInterval
-            let durationChange: TimeInterval
-            let percentageChange: Double
+            let periodLabel: String // e.g., "Last Week"
+            let comparisonLabel: String // e.g., "2 Weeks Ago"
+            
+            let currentDuration: TimeInterval
+            let previousDuration: TimeInterval
+            
+            var durationChange: TimeInterval { currentDuration - previousDuration }
+            var percentageChange: Double {
+                guard previousDuration > 0 else { return 0 }
+                return (durationChange / previousDuration) * 100
+            }
+            
+            // Breakdown of changes by activity
             let activityChanges: [ActivityChange]
-            let comparisonLabel: String  // e.g., "Last Week", "3-Day Avg"
         }
     }
     
-    // MARK: - Generate Report
+    // MARK: - Generators
+    
     func generateReport(for period: ReportPeriod, blocks: [TimeBlock], activities: [Activity]) -> Report {
-        let (start, end) = period.dateRange
-        let periodBlocks = blocks.filter { $0.startTime >= start && $0.startTime < end }
-        
-        let totalDuration = periodBlocks.reduce(0) { $0 + $1.duration }
-        let totalSwitches = periodBlocks.reduce(0) { $0 + $1.switchCount }
-        
-        // Breakdown
-        var durMap: [String: (TimeInterval, String)] = [:]
-        for b in periodBlocks {
-            let curr = durMap[b.activityName] ?? (0, b.activityColor)
-            durMap[b.activityName] = (curr.0 + b.duration, b.activityColor)
-        }
-        
-        let breakdown = durMap.map { k, v in
-            (name: k, duration: v.0, percentage: totalDuration > 0 ? (v.0/totalDuration)*100 : 0, color: v.1)
-        }.sorted { $0.duration > $1.duration }
-        
-        // Daily
-        let cal = Calendar.current
-        var dailyMap: [Date: TimeInterval] = [:]
-        for b in periodBlocks {
-            let d = cal.startOfDay(for: b.startTime)
-            dailyMap[d, default: 0] += b.duration
-        }
-        let dailyTotals = dailyMap.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
-        
-        let top5 = Array(breakdown.prefix(5)).map { ($0.name, $0.duration) }
-        let bestDay = dailyTotals.max { $0.1 < $1.1 }
-        
-        // Goal Lookup
-        let goalMap = Dictionary(activities.map { ($0.name, $0.goal) }, uniquingKeysWith: { (first, _) in first })
-        
-        let comparison = calculateComparison(
-            currentBlocks: periodBlocks,
-            period: period,
-            allBlocks: blocks,
-            goalMap: goalMap
-        )
-        
-        return Report(
-            period: period,
-            totalDuration: totalDuration,
-            totalBlocks: periodBlocks.count,
-            totalSwitches: totalSwitches,
-            activityBreakdown: breakdown,
-            dailyTotals: dailyTotals,
-            comparisonToPrevious: comparison,
-            topActivities: top5,
-            mostProductiveDay: bestDay
-        )
-    }
-    
-    private func calculateComparison(
-        currentBlocks: [TimeBlock],
-        period: ReportPeriod,
-        allBlocks: [TimeBlock],
-        goalMap: [String: ActivityGoal]
-    ) -> Report.ComparisonData? {
-        let (cStart, cEnd) = period.dateRange
         let calendar = Calendar.current
+        let now = Date()
         
-        let (previousBlocks, comparisonLabel): ([TimeBlock], String)
+        // 1. Determine Date Ranges
+        let currentRange: (start: Date, end: Date)
+        let previousRange: (start: Date, end: Date)
+        var isAverageComparison = false
         
         switch period {
         case .day:
-            // Compare yesterday to average of 3 days before
-            // Days: -4, -3, -2 (average)
-            let day2 = calendar.date(byAdding: .day, value: -2, to: cStart)!
-            let day3 = calendar.date(byAdding: .day, value: -3, to: cStart)!
-            let day4 = calendar.date(byAdding: .day, value: -4, to: cStart)!
+            // Current: Yesterday (Full Day)
+            let todayStart = calendar.startOfDay(for: now)
+            let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart)!
+            let yesterdayEnd = todayStart
+            currentRange = (yesterdayStart, yesterdayEnd)
             
-            let blocks = allBlocks.filter { block in
-                (block.startTime >= day4 && block.startTime < day3) ||
-                (block.startTime >= day3 && block.startTime < day2) ||
-                (block.startTime >= day2 && block.startTime < cStart)
-            }
-            
-            previousBlocks = blocks
-            comparisonLabel = "3-Day Avg"
+            // Previous: 7 Days prior to Yesterday
+            let sevenDaysAgo = calendar.date(byAdding: .day, value: -7, to: yesterdayStart)!
+            previousRange = (sevenDaysAgo, yesterdayStart)
+            isAverageComparison = true
             
         case .week:
-            // Compare this week to last week
-            let lastWeekStart = calendar.date(byAdding: .weekOfYear, value: -1, to: cStart)!
-            let lastWeekEnd = cStart
+            // Current: Last FULL Completed Week
+            let currentWeekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now))!
+            let lastWeekStart = calendar.date(byAdding: .weekOfYear, value: -1, to: currentWeekStart)!
+            currentRange = (lastWeekStart, currentWeekStart)
             
-            previousBlocks = allBlocks.filter { $0.startTime >= lastWeekStart && $0.startTime < lastWeekEnd }
-            comparisonLabel = "Last Week"
+            // Previous: The week before that
+            let twoWeeksAgoStart = calendar.date(byAdding: .weekOfYear, value: -1, to: lastWeekStart)!
+            previousRange = (twoWeeksAgoStart, lastWeekStart)
             
         case .month:
-            // Compare this month to last month
-            let lastMonthStart = calendar.date(byAdding: .month, value: -1, to: cStart)!
-            let lastMonthEnd = cStart
+            // Current: Month to Date
+            let thisMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
+            currentRange = (thisMonthStart, now)
             
-            previousBlocks = allBlocks.filter { $0.startTime >= lastMonthStart && $0.startTime < lastMonthEnd }
-            comparisonLabel = "Last Month"
+            // Previous: Last Month to Same Date
+            let lastMonthStart = calendar.date(byAdding: .month, value: -1, to: thisMonthStart)!
+            let daysInCurrent = calendar.dateComponents([.day], from: thisMonthStart, to: now).day ?? 0
+            let lastMonthEndCandidate = calendar.date(byAdding: .day, value: daysInCurrent, to: lastMonthStart)!
+            let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: lastMonthStart)!
+            let lastMonthEnd = min(lastMonthEndCandidate, nextMonthStart)
+            previousRange = (lastMonthStart, lastMonthEnd)
         }
         
-        guard !previousBlocks.isEmpty else { return nil }
+        // 2. Filter Data
+        let currentBlocks = filterBlocks(blocks, in: currentRange)
+        let previousBlocks = filterBlocks(blocks, in: previousRange)
         
-        // For day view, we need to average the 3 days
-        let prevDur: TimeInterval
-        if period == .day {
-            let totalPrevDur = previousBlocks.reduce(0) { $0 + $1.duration }
-            prevDur = totalPrevDur / 3.0  // Average of 3 days
-        } else {
-            prevDur = previousBlocks.reduce(0) { $0 + $1.duration }
+        // 3. Calculate Totals (Total Duration & Unaccounted Duration)
+        let currentTotal = calculateTotalDuration(currentBlocks)
+        
+        // ✅ CALCULATE UNACCOUNTED DURATION (Gaps)
+        let unaccountedTotal = currentBlocks
+            .filter { $0.isGap }
+            .reduce(0) { $0 + $1.duration }
+        
+        var previousTotal = calculateTotalDuration(previousBlocks)
+        
+        // ADJUSTMENT: If comparing against 7-day average, divide previous by 7
+        if isAverageComparison {
+            previousTotal /= 7.0
         }
         
-        let currDur = currentBlocks.reduce(0) { $0 + $1.duration }
-        let diff = currDur - prevDur
+        // 4. Generate Activity Breakdown (Current Period)
+        let breakdown = generateBreakdown(blocks: currentBlocks, totalDuration: currentTotal)
         
-        // Activity Changes
-        var cMap: [String: TimeInterval] = [:]
-        var pMap: [String: TimeInterval] = [:]
+        // 5. Generate Comparison Data
+        var previousBreakdown = generateBreakdown(blocks: previousBlocks, totalDuration: 1)
         
-        for b in currentBlocks {
-            cMap[b.activityName, default: 0] += b.duration
-        }
-        
-        for b in previousBlocks {
-            pMap[b.activityName, default: 0] += b.duration
-        }
-        
-        // For day view, average the previous activities
-        if period == .day {
-            for key in pMap.keys {
-                pMap[key] = (pMap[key] ?? 0) / 3.0
+        if isAverageComparison {
+            previousBreakdown = previousBreakdown.map { item in
+                Report.ActivityBreakdown(
+                    name: item.name,
+                    duration: item.duration / 7.0,
+                    percentage: item.percentage,
+                    color: item.color
+                )
             }
         }
         
-        let allNames = Set(cMap.keys).union(pMap.keys)
-        let changes: [ActivityChange] = allNames.map { name in
-            let c = cMap[name] ?? 0
-            let p = pMap[name] ?? 0
-            let chg = c - p
-            let pct = p > 0 ? (chg/p)*100 : (c > 0 ? 100 : 0)
-            return ActivityChange(
-                name: name,
-                change: chg,
-                percentageChange: pct,
-                goal: goalMap[name] ?? .neutral
-            )
-        }.sorted { abs($0.change) > abs($1.change) }
+        let activityChanges = calculateActivityChanges(
+            current: breakdown,
+            previous: previousBreakdown,
+            activities: activities
+        )
         
-        return Report.ComparisonData(
-            previousTotalDuration: prevDur,
-            durationChange: diff,
-            percentageChange: prevDur > 0 ? (diff/prevDur)*100 : 0,
-            activityChanges: changes,
-            comparisonLabel: comparisonLabel
+        let comparison = Report.ComparisonData(
+            periodLabel: period.displayName,
+            comparisonLabel: period.comparisonDescription,
+            currentDuration: currentTotal,
+            previousDuration: previousTotal,
+            activityChanges: activityChanges
+        )
+        
+        // 6. Format Date Range String
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "MMM d"
+        let rangeString = "\(dateFormatter.string(from: currentRange.start)) - \(dateFormatter.string(from: currentRange.end.addingTimeInterval(-1)))"
+        
+        return Report(
+            period: period,
+            dateRange: rangeString,
+            totalDuration: currentTotal,
+            unaccountedDuration: unaccountedTotal, // ✅ Pass to struct
+            totalBlocks: currentBlocks.count,
+            activityBreakdown: breakdown,
+            comparisonToPrevious: comparison,
+            topActivities: Array(breakdown.prefix(5))
         )
     }
     
-    func formatReportAsText(_ report: Report) -> String {
-        var text = "Report for \(report.period.displayName)\n"
-        text += "Total: \(report.totalDuration.formattedDuration)\n"
-        text += "Activities: \(report.totalBlocks)\n\n"
+    // MARK: - Helper Methods
+    
+    private func filterBlocks(_ blocks: [TimeBlock], in range: (start: Date, end: Date)) -> [TimeBlock] {
+        blocks.filter { block in
+            // Filter 1: Must be within range
+            guard block.startTime < range.end, (block.endTime ?? Date()) > range.start else { return false }
+            
+            // Filter 2: Ignore "Untracked" (Gray) blocks.
+            // NOTE: We KEEP "Gap" (Orange) blocks so we can calculate unaccounted time.
+            if block.isUntrackedBlock { return false }
+            
+            return true
+        }
+    }
+    
+    private func calculateTotalDuration(_ blocks: [TimeBlock]) -> TimeInterval {
+        blocks.reduce(0) { total, block in
+            if block.isUntrackedBlock { return total }
+            return total + block.duration
+        }
+    }
+    
+    private func generateBreakdown(blocks: [TimeBlock], totalDuration: TimeInterval) -> [Report.ActivityBreakdown] {
+        var dict: [String: (duration: TimeInterval, color: String)] = [:]
         
-        if let comparison = report.comparisonToPrevious {
-            text += "Comparison to \(comparison.comparisonLabel):\n"
-            text += "Change: \(comparison.durationChange.formattedDuration) "
-            text += "(\(String(format: "%.1f", comparison.percentageChange))%)\n\n"
+        for block in blocks {
+            let name = block.displayName
+            let duration = block.duration
+            let color = block.activityColor
+            
+            if let existing = dict[name] {
+                dict[name] = (existing.duration + duration, color)
+            } else {
+                dict[name] = (duration, color)
+            }
         }
         
-        text += "Top Activities:\n"
-        for (name, duration) in report.topActivities {
-            text += "- \(name): \(duration.formattedDuration)\n"
+        let sorted = dict.map { key, value in
+            Report.ActivityBreakdown(
+                name: key,
+                duration: value.duration,
+                percentage: totalDuration > 0 ? (value.duration / totalDuration) : 0,
+                color: value.color
+            )
+        }.sorted { $0.duration > $1.duration }
+        
+        return sorted
+    }
+    
+    private func calculateActivityChanges(
+        current: [Report.ActivityBreakdown],
+        previous: [Report.ActivityBreakdown],
+        activities: [Activity]
+    ) -> [ActivityChange] {
+        var changes: [ActivityChange] = []
+        let prevDict = Dictionary(uniqueKeysWithValues: previous.map { ($0.name, $0.duration) })
+        
+        // 1. Check all current activities
+        for item in current {
+            let prevDuration = prevDict[item.name] ?? 0
+            let goal = activities.first(where: { $0.name == item.name })?.goal ?? .neutral
+            
+            changes.append(ActivityChange(
+                name: item.name,
+                currentDuration: item.duration,
+                previousDuration: prevDuration,
+                goal: goal
+            ))
+        }
+        
+        // 2. Check activities that existed previously but are 0 now
+        for item in previous {
+            if !current.contains(where: { $0.name == item.name }) {
+                let goal = activities.first(where: { $0.name == item.name })?.goal ?? .neutral
+                
+                changes.append(ActivityChange(
+                    name: item.name,
+                    currentDuration: 0,
+                    previousDuration: item.duration,
+                    goal: goal
+                ))
+            }
+        }
+        
+        return changes.sorted { abs($0.change) > abs($1.change) }
+    }
+    
+    func formatReportAsText(_ report: Report) -> String {
+        var text = "Cadence Report: \(report.period.displayName)\n"
+        text += "Period: \(report.dateRange)\n\n"
+        
+        text += "Total Duration: \(report.totalDuration.formattedDuration)\n"
+        text += "Unaccounted: \(report.unaccountedDuration.formattedDuration)\n" // Added to text report
+        
+        if let comp = report.comparisonToPrevious {
+            let sign = comp.durationChange >= 0 ? "+" : ""
+            text += "Change: \(sign)\(comp.durationChange.formattedDuration) (\(sign)\(String(format: "%.1f", comp.percentageChange))%)\n"
+        }
+        
+        text += "\nTop Activities:\n"
+        for item in report.topActivities.prefix(5) {
+            text += "• \(item.name): \(item.duration.formattedDuration)\n"
         }
         
         return text

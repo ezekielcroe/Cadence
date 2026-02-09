@@ -112,13 +112,10 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - SUBVIEWS
-
 // MARK: - Default Tracking Mode View
 struct DefaultTrackingModeView: View {
-    @Environment(\.modelContext) private var modelContext
-    @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var isTrackingEnabled: Bool = true
+    // Reads/Writes directly to UserDefaults
+    @AppStorage("defaultTrackingMode") private var defaultTrackingModeRaw: String = TrackingMode.on.rawValue
     
     var body: some View {
         Form {
@@ -129,10 +126,13 @@ struct DefaultTrackingModeView: View {
             }
             
             Section {
-                Toggle("Enable Tracking by Default", isOn: $isTrackingEnabled)
-                    .onChange(of: isTrackingEnabled) { _, newValue in
-                        timeTrackingManager?.saveDefaultTrackingMode(newValue ? .on : .off)
+                // FIX: Define Binding inline to access AppStorage directly
+                Toggle("Enable Tracking by Default", isOn: Binding(
+                    get: { defaultTrackingModeRaw == TrackingMode.on.rawValue },
+                    set: { newValue in
+                        defaultTrackingModeRaw = newValue ? TrackingMode.on.rawValue : TrackingMode.off.rawValue
                     }
+                ))
             } header: {
                 Text("Default Mode")
             } footer: {
@@ -178,18 +178,13 @@ struct DefaultTrackingModeView: View {
         }
         .navigationTitle("Default Tracking Mode")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            timeTrackingManager = TimeTrackingManager(modelContext: modelContext)
-            isTrackingEnabled = timeTrackingManager?.defaultTrackingMode == .on
-        }
     }
 }
 
 // MARK: - Background Tracking View
 struct BackgroundTrackingView: View {
-    @Environment(\.modelContext) private var modelContext
-    @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var selectedDuration: TimeInterval = 900
+    // REFACTORED: Use AppStorage directly
+    @AppStorage("maxBackgroundDuration") private var maxBackgroundDuration: Double = 900
     
     let durationOptions: [(label: String, value: TimeInterval)] = [
         ("10 minutes", 600),
@@ -210,22 +205,19 @@ struct BackgroundTrackingView: View {
             }
             
             Section {
-                Picker("Duration", selection: $selectedDuration) {
+                Picker("Duration", selection: $maxBackgroundDuration) {
                     ForEach(durationOptions, id: \.value) { option in
                         Text(option.label).tag(option.value)
                     }
                 }
                 .pickerStyle(.inline)
-                .onChange(of: selectedDuration) { _, newValue in
-                    timeTrackingManager?.saveMaxBackgroundDuration(newValue)
-                }
             } header: {
                 Text("Auto-Stop Duration")
             } footer: {
-                if selectedDuration == .infinity {
+                if maxBackgroundDuration == .infinity {
                     Text("Activity will continue tracking indefinitely while in background")
                 } else {
-                    Text("Activity will stop after \(selectedDuration.formattedDuration) in background")
+                    Text("Activity will stop after \(maxBackgroundDuration.formattedDuration) in background")
                 }
             }
             
@@ -239,8 +231,8 @@ struct BackgroundTrackingView: View {
                     Text("• This doesn't drain battery - no actual background processing happens")
                     Text("• To switch activities, you must open the app")
                     
-                    if selectedDuration != .infinity {
-                        Text("\n• If you're away longer than \(selectedDuration.formattedDuration), the activity stops at that time")
+                    if maxBackgroundDuration != .infinity {
+                        Text("\n• If you're away longer than \(maxBackgroundDuration.formattedDuration), the activity stops at that time")
                             .foregroundStyle(.orange)
                     }
                 }
@@ -252,18 +244,13 @@ struct BackgroundTrackingView: View {
         }
         .navigationTitle("Background Tracking")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            timeTrackingManager = TimeTrackingManager(modelContext: modelContext)
-            selectedDuration = timeTrackingManager?.maxBackgroundDuration ?? 900
-        }
     }
 }
 
 // MARK: - Notification Settings View
 struct NotificationSettingsView: View {
-    @Environment(\.modelContext) private var modelContext
-    @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var notificationsEnabled = false
+    // REFACTORED: Use AppStorage directly
+    @AppStorage("notificationsEnabled") private var notificationsEnabled = true
     @State private var showingPermissionAlert = false
     
     var body: some View {
@@ -279,9 +266,9 @@ struct NotificationSettingsView: View {
                     .onChange(of: notificationsEnabled) { _, newValue in
                         if newValue {
                             checkAndRequestNotificationPermission()
-                        } else {
-                            timeTrackingManager?.notificationsEnabled = false
                         }
+                        // We don't need to manually update TimeTrackingManager;
+                        // AppStorage writes to UserDefaults, which the Manager reads.
                     }
             } header: {
                 Text("Notifications")
@@ -310,8 +297,6 @@ struct NotificationSettingsView: View {
         .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            timeTrackingManager = TimeTrackingManager(modelContext: modelContext)
-            notificationsEnabled = timeTrackingManager?.notificationsEnabled ?? true
             checkNotificationPermission()
         }
         .alert("Notifications Disabled", isPresented: $showingPermissionAlert) {
@@ -322,7 +307,6 @@ struct NotificationSettingsView: View {
             }
             Button("Cancel", role: .cancel) {
                 notificationsEnabled = false
-                timeTrackingManager?.notificationsEnabled = false
             }
         } message: {
             Text("Please enable notifications in Settings to receive activity reminders")
@@ -333,21 +317,15 @@ struct NotificationSettingsView: View {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
                 switch settings.authorizationStatus {
-                case .authorized:
+                case .authorized, .provisional, .ephemeral:
                     notificationsEnabled = true
-                    timeTrackingManager?.notificationsEnabled = true
                 case .notDetermined:
                     requestNotificationPermission()
                 case .denied:
                     notificationsEnabled = false
-                    timeTrackingManager?.notificationsEnabled = false
                     showingPermissionAlert = true
-                case .provisional, .ephemeral:
-                    notificationsEnabled = true
-                    timeTrackingManager?.notificationsEnabled = true
                 @unknown default:
                     notificationsEnabled = false
-                    timeTrackingManager?.notificationsEnabled = false
                 }
             }
         }
@@ -358,10 +336,8 @@ struct NotificationSettingsView: View {
             DispatchQueue.main.async {
                 if granted {
                     notificationsEnabled = true
-                    timeTrackingManager?.notificationsEnabled = true
                 } else {
                     notificationsEnabled = false
-                    timeTrackingManager?.notificationsEnabled = false
                     showingPermissionAlert = true
                 }
             }
@@ -373,7 +349,6 @@ struct NotificationSettingsView: View {
             DispatchQueue.main.async {
                 if settings.authorizationStatus == .denied {
                     notificationsEnabled = false
-                    timeTrackingManager?.notificationsEnabled = false
                 }
             }
         }
@@ -411,7 +386,6 @@ struct InterfaceSettingsView: View {
                                 .font(.caption)
                         }
                         .onChange(of: hapticIntensity) { _, _ in
-                            // Test haptic when slider changes
                             HapticManager.shared.impact(style: .medium, intensity: hapticIntensity)
                         }
                     }
@@ -456,6 +430,7 @@ class HapticManager {
         case .heavy:
             impactHeavy.impactOccurred(intensity: intensity)
         case .soft:
+            // .soft fallback for older iOS if needed, or mapped to light with lower intensity
             impactLight.impactOccurred(intensity: intensity * 0.7)
         case .rigid:
             impactHeavy.impactOccurred(intensity: intensity * 1.2)

@@ -78,7 +78,7 @@ final class Activity {
     var createdAt: Date
     var sortOrder: Int
     
-    // NEW: Goal property
+    // Goal property
     var goalRaw: String = "neutral"
     
     var goal: ActivityGoal {
@@ -212,7 +212,7 @@ final class TimeBlock {
     var stopState: String  // "switched", "stopped", "paused", "ongoing"
     var switchCount: Int
     var remarks: String
-    var blockType: String  // "activity", "gap", "pause"
+    var blockType: String  // "activity", "gap", "pause", "untracked"
     
     init(activityID: UUID?, activityName: String, activityColor: String, activitySetID: UUID?, startTime: Date, blockType: String = "activity") {
         self.id = UUID()
@@ -242,11 +242,12 @@ final class TimeBlock {
         )
     }
     
+    // UPDATED: Orange for Gaps
     static func createGap(startTime: Date, endTime: Date? = nil) -> TimeBlock {
         let gap = TimeBlock(
             activityID: nil,
             activityName: "Gap",
-            activityColor: "#9E9E9E",
+            activityColor: "#FF5722", // Deep Orange
             activitySetID: nil,
             startTime: startTime,
             blockType: "gap"
@@ -255,17 +256,32 @@ final class TimeBlock {
         return gap
     }
     
+    // UPDATED: Blue-Gray for Pauses
     static func createPause(startTime: Date, endTime: Date? = nil) -> TimeBlock {
         let pause = TimeBlock(
             activityID: nil,
             activityName: "Pause",
-            activityColor: "#FF9800",
+            activityColor: "#607D8B", // Blue Gray
             activitySetID: nil,
             startTime: startTime,
             blockType: "pause"
         )
         pause.endTime = endTime
         return pause
+    }
+    
+    // NEW: Light Gray for Untracked
+    static func createUntracked(startTime: Date, endTime: Date? = nil) -> TimeBlock {
+        let untracked = TimeBlock(
+            activityID: nil,
+            activityName: "Tracking Off",
+            activityColor: "#BDBDBD", // Light Gray
+            activitySetID: nil,
+            startTime: startTime,
+            blockType: "untracked"
+        )
+        untracked.endTime = endTime
+        return untracked
     }
     
     var duration: TimeInterval {
@@ -279,6 +295,7 @@ final class TimeBlock {
     var isActive: Bool { endTime == nil && !isPaused }
     var isGap: Bool { blockType == "gap" }
     var isPauseBlock: Bool { blockType == "pause" }
+    var isUntrackedBlock: Bool { blockType == "untracked" }
     var isRegularActivity: Bool { blockType == "activity" }
     
     var displayName: String {
@@ -312,10 +329,23 @@ extension TimeInterval {
         
         if hours > 0 {
             return String(format: "%dh %dm %ds", hours, minutes, seconds)
-        } else if minutes > 0 {
-            return String(format: "%dm %ds", minutes, seconds)
         } else {
-            return String(format: "%ds", seconds)
+            return String(format: "%dm %ds", minutes, seconds)
         }
+    }
+}
+
+// MARK: - Stats Model
+struct DayStats {
+    let totalDuration: TimeInterval
+    let activityDurations: [String: TimeInterval]
+    let totalSwitches: Int
+    let blockCount: Int
+    let unaccountedDuration: TimeInterval
+    
+    var sortedActivities: [(name: String, duration: TimeInterval)] {
+        activityDurations
+            .sorted { $0.value > $1.value }
+            .map { (name: $0.key, duration: $0.value) }
     }
 }

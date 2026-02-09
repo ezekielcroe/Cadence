@@ -1,4 +1,4 @@
-// MARK: - TimeTrackingManager (With Tracking Modes, Day Boundaries Removed)
+// MARK: - TimeTrackingManager (Updated Gap Logic)
 
 import Foundation
 import SwiftData
@@ -13,25 +13,20 @@ class TimeTrackingManager: ObservableObject {
     
     private var modelContext: ModelContext
     
-    // Published properties for UI updates
     @Published var currentTimeBlock: TimeBlock?
     @Published var activeSet: ActivitySet?
     @Published var currentTimeBlockRule: TimeBlockRule?
     
-    // Background tracking
     private var backgroundEnteredTime: Date?
     private(set) var maxBackgroundDuration: TimeInterval = 900
     
-    // Default tracking mode (when not within any time block rule)
     private(set) var defaultTrackingMode: TrackingMode = .on
     
-    // Notification preferences
     var notificationsEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "notificationsEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "notificationsEnabled") }
     }
     
-    // Timer for UI updates
     private var timer: Timer?
     
     // MARK: - Initialization
@@ -39,7 +34,6 @@ class TimeTrackingManager: ObservableObject {
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
         
-        // Set default notification preference if not set
         if UserDefaults.standard.object(forKey: "notificationsEnabled") == nil {
             notificationsEnabled = true
         }
@@ -95,34 +89,58 @@ class TimeTrackingManager: ObservableObject {
     
     // MARK: - Current Tracking Mode
     
-    /// Get the current tracking mode based on active time block rule or default
     var currentTrackingMode: TrackingMode {
-        // Find active time block rule
         if let activeRule = getActiveTimeBlockRule() {
             return activeRule.trackingMode
         }
-        // Fall back to default
         return defaultTrackingMode
     }
     
-    /// Whether gaps should be tracked right now
     var shouldTrackGaps: Bool {
         currentTrackingMode.tracksGaps
     }
     
-    /// Whether auto-switching sets is enabled right now
     var shouldAutoSwitchSets: Bool {
         currentTrackingMode.autoSwitchesSets
     }
     
-    /// Get the currently active time block rule (if any)
     func getActiveTimeBlockRule() -> TimeBlockRule? {
         let descriptor = FetchDescriptor<TimeBlockRule>(
             sortBy: [SortDescriptor(\.startTime, order: .forward)]
         )
-        
         guard let rules = try? modelContext.fetch(descriptor) else { return nil }
         return rules.first(where: { $0.isActiveNow() })
+    }
+    
+    // MARK: - Helper: Historical Mode Checking
+    
+    private func getTrackingMode(at date: Date) -> TrackingMode {
+        let descriptor = FetchDescriptor<TimeBlockRule>()
+        guard let rules = try? modelContext.fetch(descriptor) else { return defaultTrackingMode }
+        
+        let calendar = Calendar.current
+        let weekday = calendar.component(.weekday, from: date)
+        let timeComponents = calendar.dateComponents([.hour, .minute], from: date)
+        let minuteOfDay = (timeComponents.hour ?? 0) * 60 + (timeComponents.minute ?? 0)
+        
+        let activeRule = rules.first { rule in
+            guard rule.isEnabled else { return false }
+            
+            if !rule.daysOfWeek.isEmpty && !rule.daysOfWeek.contains(weekday) {
+                return false
+            }
+            
+            let startMinutes = calendar.component(.hour, from: rule.startTime) * 60 + calendar.component(.minute, from: rule.startTime)
+            let endMinutes = calendar.component(.hour, from: rule.endTime) * 60 + calendar.component(.minute, from: rule.endTime)
+            
+            if endMinutes < startMinutes {
+                return minuteOfDay >= startMinutes || minuteOfDay < endMinutes
+            } else {
+                return minuteOfDay >= startMinutes && minuteOfDay < endMinutes
+            }
+        }
+        
+        return activeRule?.trackingMode ?? defaultTrackingMode
     }
     
     // MARK: - Activity Management
@@ -144,10 +162,10 @@ class TimeTrackingManager: ObservableObject {
         guard let current = currentTimeBlock, !current.isPaused else { return }
         
         let now = Date()
-        
         current.endTime = now
         current.stopState = "paused"
         
+        // Create a Pause block
         let pauseBlock = TimeBlock.createPause(startTime: now)
         modelContext.insert(pauseBlock)
         currentTimeBlock = pauseBlock
@@ -160,10 +178,18 @@ class TimeTrackingManager: ObservableObject {
         guard let current = currentTimeBlock, current.isPauseBlock else { return }
         
         let now = Date()
-        
         current.endTime = now
         current.stopState = "switched"
         current.switchCount += 1
+        
+        // CHECK: Pause Duration Logic
+        // If pause > 15 mins (900s), convert it to a GAP
+        if current.duration > 900 {
+            current.blockType = "gap"
+            current.activityName = "Gap"
+            current.activityColor = "#FF5722" // Orange
+            // We do not change the start/end time, just the classification
+        }
         
         let resumedBlock = TimeBlock(activity: activity, startTime: now)
         modelContext.insert(resumedBlock)
@@ -176,18 +202,23 @@ class TimeTrackingManager: ObservableObject {
         guard let current = currentTimeBlock else { return }
         
         let now = Date()
-        
         current.endTime = now
         current.stopState = "stopped"
         
-        // Only create gap if current tracking mode allows it
-        if shouldTrackGaps {
+        // Check current tracking mode
+        let mode = getTrackingMode(at: now)
+        
+        if mode == .on {
+            // Tracking ON: Create Gap
             let gap = TimeBlock.createGap(startTime: now)
             modelContext.insert(gap)
             currentTimeBlock = gap
         } else {
-            // No gap tracking - just end the activity
-            currentTimeBlock = nil
+            // Tracking OFF: Create Untracked Block
+            // This ensures the timeline is continuous but neutral
+            let untracked = TimeBlock.createUntracked(startTime: now)
+            modelContext.insert(untracked)
+            currentTimeBlock = untracked
         }
         
         clearBackgroundState()
@@ -212,7 +243,6 @@ class TimeTrackingManager: ObservableObject {
             guard let self = self else { return }
             Task { @MainActor [weak self] in
                 self?.objectWillChange.send()
-                // Periodically check if time block rule has changed
                 self?.checkAndApplyCurrentTimeBlockRule()
             }
         }
@@ -242,17 +272,17 @@ class TimeTrackingManager: ObservableObject {
     }
     
     @objc private func appDidEnterBackground() {
-            // 1. Force reload settings to ensure we have the latest duration
-            loadBackgroundSettings()
-            
-            guard let current = currentTimeBlock,
-                  !current.isPaused,
-                  !current.isGap else { return }
-            
-            backgroundEnteredTime = Date()
-            saveBackgroundState()
-            scheduleBackgroundReminder()
-        }
+        loadBackgroundSettings()
+        
+        guard let current = currentTimeBlock,
+              !current.isPaused,
+              !current.isGap,
+              !current.isUntrackedBlock else { return }
+        
+        backgroundEnteredTime = Date()
+        saveBackgroundState()
+        scheduleBackgroundReminder()
+    }
     
     @objc private func appWillEnterForeground() {
         defer {
@@ -279,16 +309,43 @@ class TimeTrackingManager: ObservableObject {
     
     private func handleBackgroundTimeout(current: TimeBlock, backgroundTime: Date) {
         let cappedEndTime = backgroundTime.addingTimeInterval(maxBackgroundDuration)
+        let now = Date()
+        
         current.endTime = cappedEndTime
         current.stopState = "stopped"
         
-        // Check tracking mode at the capped end time to decide about gap
-        // For simplicity, use current tracking mode
-        if shouldTrackGaps {
-            let gap = TimeBlock.createGap(startTime: cappedEndTime)
-            modelContext.insert(gap)
-            currentTimeBlock = gap
+        // 1. Determine duration of the "missing time"
+        let gapDuration = now.timeIntervalSince(cappedEndTime)
+        
+        // 2. Check rule at timeout
+        let modeAtTimeout = getTrackingMode(at: cappedEndTime)
+        
+        if modeAtTimeout == .on {
+            if gapDuration < 120 {
+                // Micro-gap (< 2m): Ignore/Extend
+                current.endTime = now
+                // No gap created
+            } else if gapDuration < 900 {
+                // Short Gap (2-15m): Create Pause
+                let pause = TimeBlock.createPause(startTime: cappedEndTime)
+                pause.endTime = now
+                pause.stopState = "stopped"
+                modelContext.insert(pause)
+                currentTimeBlock = nil // Or start a new gap? Standard behavior is stop.
+            } else {
+                // Long Gap (> 15m): Create Gap
+                let gap = TimeBlock.createGap(startTime: cappedEndTime)
+                gap.endTime = now
+                gap.stopState = "stopped"
+                modelContext.insert(gap)
+                currentTimeBlock = nil
+            }
         } else {
+            // Mode OFF: Create Untracked
+            let untracked = TimeBlock.createUntracked(startTime: cappedEndTime)
+            untracked.endTime = now
+            untracked.stopState = "stopped"
+            modelContext.insert(untracked)
             currentTimeBlock = nil
         }
         
@@ -307,7 +364,6 @@ class TimeTrackingManager: ObservableObject {
         
         currentTimeBlock = activeBlock
         
-        // Check if we need to handle a background timeout from previous session
         if let backgroundTime = backgroundEnteredTime {
             let elapsedTime = Date().timeIntervalSince(backgroundTime)
             
@@ -323,119 +379,69 @@ class TimeTrackingManager: ObservableObject {
     }
     
     // MARK: - Time Block Rule Application
-        /// Check current time block rule and apply its settings
-        func checkAndApplyCurrentTimeBlockRule() {
-            let activeRule = getActiveTimeBlockRule()
+    
+    func checkAndApplyCurrentTimeBlockRule() {
+        let activeRule = getActiveTimeBlockRule()
+        let previousRule = currentTimeBlockRule
+        currentTimeBlockRule = activeRule
+        
+        guard let rule = activeRule,
+              rule.trackingMode.autoSwitchesSets,
+              let setID = rule.linkedSetID else { return }
+        
+        if previousRule?.id != rule.id {
+            let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
+            let currentActiveSet = sets?.first { $0.isActive }
             
-            // Update current rule reference
-            let previousRule = currentTimeBlockRule
-            currentTimeBlockRule = activeRule
-            
-            // Only auto-switch if the mode allows it
-            guard let rule = activeRule,
-                  rule.trackingMode.autoSwitchesSets, // CHANGED: Access via trackingMode
-                  let setID = rule.linkedSetID else { return }
-            
-            // Check if rule changed (to avoid repeated switches)
-            if previousRule?.id != rule.id {
-                let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
-                let currentActiveSet = sets?.first { $0.isActive }
-                
-                if currentActiveSet?.id != setID,
-                   let targetSet = sets?.first(where: { $0.id == setID }) {
-                    switchToActivitySet(targetSet, ruleName: rule.name)
-                }
+            if currentActiveSet?.id != setID,
+               let targetSet = sets?.first(where: { $0.id == setID }) {
+                switchToActivitySet(targetSet, ruleName: rule.name)
             }
         }
+    }
     
     private func switchToActivitySet(_ set: ActivitySet, ruleName: String) {
         let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
         sets?.forEach { $0.isActive = false }
         set.isActive = true
         activeSet = set
-        
         saveContext()
         notifySetSwitch(setName: set.name, ruleName: ruleName)
     }
     
-    // MARK: - Notifications
+    // MARK: - Notifications (Standard Implementation)
     
     private func scheduleBackgroundReminder() {
         guard notificationsEnabled else { return }
         guard maxBackgroundDuration > 300 else { return }
-        
         let reminderTime = maxBackgroundDuration - 300
-        
         let content = UNMutableNotificationContent()
         content.title = "Cadence Activity Tracking"
         content.body = "Your activity will stop in 5 minutes. Open the app to continue tracking."
-        content.sound = .default
-        
-        let trigger = UNTimeIntervalNotificationTrigger(
-            timeInterval: reminderTime,
-            repeats: false
-        )
-        let request = UNNotificationRequest(
-            identifier: "backgroundReminder",
-            content: content,
-            trigger: trigger
-        )
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Error scheduling reminder: \(error)")
-            }
-        }
+        let request = UNNotificationRequest(identifier: "backgroundReminder", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: reminderTime, repeats: false))
+        UNUserNotificationCenter.current().add(request)
     }
     
     private func cancelBackgroundReminder() {
-        UNUserNotificationCenter.current().removePendingNotificationRequests(
-            withIdentifiers: ["backgroundReminder"]
-        )
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["backgroundReminder"])
     }
     
     private func notifyActivityStopped() {
         guard notificationsEnabled else { return }
-        
         let content = UNMutableNotificationContent()
         content.title = "Activity Stopped"
         content.body = "Your activity was stopped after \(maxBackgroundDuration.formattedDuration) in background."
-        content.sound = .default
-        
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(
-            identifier: "activityStopped",
-            content: content,
-            trigger: trigger
-        )
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Error showing notification: \(error)")
-            }
-        }
+        let request = UNNotificationRequest(identifier: "activityStopped", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+        UNUserNotificationCenter.current().add(request)
     }
     
     private func notifySetSwitch(setName: String, ruleName: String) {
         guard notificationsEnabled else { return }
-        
         let content = UNMutableNotificationContent()
         content.title = "Activity Set Changed"
         content.body = "\(ruleName): Switched to \(setName)"
-        content.sound = .default
-        
-        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(
-            identifier: "setSwitch",
-            content: content,
-            trigger: trigger
-        )
-        
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Error showing notification: \(error)")
-            }
-        }
+        let request = UNNotificationRequest(identifier: "setSwitch", content: content, trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+        UNUserNotificationCenter.current().add(request)
     }
     
     // MARK: - Data Queries
@@ -454,47 +460,46 @@ class TimeTrackingManager: ObservableObject {
         
         return (try? modelContext.fetch(descriptor)) ?? []
     }
-    
-    func getTodaysStats() -> DayStats {
-        let blocks = getTodaysTimeBlocks()
         
-        var activityDurations: [String: TimeInterval] = [:]
-        var totalDuration: TimeInterval = 0
-        var totalSwitches: Int = 0
-        
-        for block in blocks {
-            let duration = block.duration
-            activityDurations[block.activityName, default: 0] += duration
-            totalDuration += duration
-            totalSwitches += block.switchCount
+        func getTodaysStats() -> DayStats {
+            let blocks = getTodaysTimeBlocks()
+            
+            var activityDurations: [String: TimeInterval] = [:]
+            var totalDuration: TimeInterval = 0
+            var unaccountedDuration: TimeInterval = 0 // Replaces Fidelity Score
+            var totalSwitches: Int = 0
+            
+            for block in blocks {
+                let duration = block.duration
+                totalDuration += duration
+                totalSwitches += block.switchCount
+                
+                if block.isGap {
+                    unaccountedDuration += duration
+                    activityDurations["Gap", default: 0] += duration
+                } else if block.isUntrackedBlock {
+                    activityDurations["Untracked", default: 0] += duration
+                } else {
+                    activityDurations[block.activityName, default: 0] += duration
+                }
+            }
+            
+            return DayStats(
+                totalDuration: totalDuration,
+                activityDurations: activityDurations,
+                totalSwitches: totalSwitches,
+                blockCount: blocks.count,
+                unaccountedDuration: unaccountedDuration // Neutral metric
+            )
         }
+
+        // MARK: - Helper Methods
         
-        return DayStats(
-            totalDuration: totalDuration,
-            activityDurations: activityDurations,
-            totalSwitches: totalSwitches,
-            blockCount: blocks.count
-        )
-    }
-    
-    // MARK: - Helper Methods
-    
-    private func saveContext() {
-        try? modelContext.save()
-    }
-}
-
-// MARK: - Stats Model
-
-struct DayStats {
-    let totalDuration: TimeInterval
-    let activityDurations: [String: TimeInterval]
-    let totalSwitches: Int
-    let blockCount: Int
-    
-    var sortedActivities: [(name: String, duration: TimeInterval)] {
-        activityDurations
-            .sorted { $0.value > $1.value }
-            .map { (name: $0.key, duration: $0.value) }
-    }
+        private func saveContext() {
+            do {
+                try modelContext.save()
+            } catch {
+                print("Failed to save context: \(error)")
+            }
+        }
 }

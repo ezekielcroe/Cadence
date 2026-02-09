@@ -7,8 +7,6 @@
 
 import SwiftUI
 
-// MARK: - Audit Row (Updated with editability indicator)
-
 struct AuditRow: View {
     let block: TimeBlock
     let isSelected: Bool
@@ -29,7 +27,7 @@ struct AuditRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Selection checkbox (when in selection mode)
+                // Selection checkbox
                 if isSelectionMode {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(isSelected ? .blue : .secondary)
@@ -45,100 +43,61 @@ struct AuditRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(block.displayName)
-                            .font(.body)
-                            .fontWeight(.medium)
+                            .font(.headline)
                             .foregroundStyle(.primary)
                         
                         if block.isGap {
                             GapBadge()
                         } else if block.isPauseBlock {
                             PauseBadge()
+                        } else if block.isUntrackedBlock {
+                            UntrackedBadge()
                         }
-                        
-                        Spacer()
-                        
-                        Text(block.duration.formattedDuration)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .monospacedDigit()
-                            .foregroundStyle(.primary)
                     }
                     
-                    HStack {
-                        Text(timeRange)
+                    Text(timeRange)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    
+                    if !block.remarks.isEmpty {
+                        Text(block.remarks)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                        
-                        if block.endTime == nil {
-                            Text("ACTIVE")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.green)
-                                .cornerRadius(4)
-                        }
-                        
-                        if !isEditable {
-                            Image(systemName: "lock.fill")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
-                        }
-                        
-                        Spacer()
-                        
-                        if !block.remarks.isEmpty {
-                            Image(systemName: "note.text")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                            .lineLimit(1)
                     }
                 }
                 
-                // Action indicator
-                if !isSelectionMode {
+                Spacer()
+                
+                // Duration & Action
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(block.duration.formattedDuration)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .fontWeight(.medium)
+                    
                     if block.isGap && isEditable {
-                        Button(action: onResolveGap) {
-                            Text("Resolve")
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundStyle(.white)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.orange)
-                                .cornerRadius(6)
+                        Button("Resolve") {
+                            onResolveGap()
                         }
-                        .buttonStyle(.plain)
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.orange)
+                        .cornerRadius(12)
                     }
                 }
             }
             .padding(.vertical, 8)
-            .padding(.horizontal, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(rowBackground)
-            )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
-    
-    private var rowBackground: Color {
-        if isSelected {
-            return Color.blue.opacity(0.1)
-        } else if block.isGap {
-            return Color.orange.opacity(0.05)
-        }
-        return Color.clear
-    }
 }
 
-// MARK: - Supporting Views
+// MARK: - Badges
 
 struct GapBadge: View {
     var body: some View {
@@ -166,10 +125,27 @@ struct PauseBadge: View {
                 .font(.caption2)
                 .fontWeight(.bold)
         }
-        .foregroundStyle(.gray)
+        .foregroundStyle(.gray) // Neutral color
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
         .background(Color.gray.opacity(0.15))
+        .cornerRadius(4)
+    }
+}
+
+struct UntrackedBadge: View {
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "eye.slash.fill")
+                .font(.caption2)
+            Text("OFF")
+                .font(.caption2)
+                .fontWeight(.bold)
+        }
+        .foregroundStyle(Color(hex: "#9E9E9E"))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(Color(hex: "#9E9E9E").opacity(0.15))
         .cornerRadius(4)
     }
 }

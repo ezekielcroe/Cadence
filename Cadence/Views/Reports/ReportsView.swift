@@ -39,16 +39,18 @@ struct ReportsView: View {
                         // Summary cards
                         HStack(spacing: 12) {
                             SummaryCard(
-                                title: "Total Time",
-                                value: report.totalDuration.formattedDuration,
-                                icon: "clock.fill",
+                                title: "Tracked",
+                                value: (report.totalDuration - (report.unaccountedDuration)).formattedDuration,
+                                icon: "clock.badge.checkmark.fill",
                                 color: .blue
                             )
+                            
+                            // Neutral "Unaccounted" card instead of "Score"
                             SummaryCard(
-                                title: "Activities",
-                                value: "\(report.totalBlocks)",
-                                icon: "list.bullet",
-                                color: .green
+                                title: "Unaccounted",
+                                value: (report.unaccountedDuration).formattedDuration,
+                                icon: "questionmark.circle", // Neutral icon
+                                color: .orange
                             )
                         }
                         .padding(.horizontal)
