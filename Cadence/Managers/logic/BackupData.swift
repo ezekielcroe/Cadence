@@ -2,15 +2,12 @@
 //  BackupData.swift
 //  Cadence
 //
-//  Created by Zhi Zheng Yeo on 1/2/26.
-//
-
 
 import Foundation
 import SwiftData
 
 // MARK: - Archive Models (DTOs)
-// These structs ensure data is portable and independent of SwiftData context
+
 struct BackupData: Codable {
     let metadata: BackupMetadata
     let activities: [ActivityDTO]
@@ -19,7 +16,7 @@ struct BackupData: Codable {
 }
 
 struct BackupMetadata: Codable {
-    var version: String = "1.0"
+    var version: String = "2.0"   // Bumped: blockType removed, pauseCount added
     let exportDate: Date
     let recordCount: Int
     let appVersion: String
@@ -42,179 +39,164 @@ struct ActivitySetDTO: Codable {
 
 struct TimeBlockDTO: Codable {
     let id: UUID
-    let activityID: UUID?
+    let activityID: UUID        // Non-optional: only activity blocks are archived
     let activityName: String
     let activityColor: String
+    let activitySetID: UUID?
     let startTime: Date
     let endTime: Date?
     let remarks: String
-    let blockType: String
-    let duration: TimeInterval
     let switchCount: Int
+    let pauseCount: Int
     let totalPauseDuration: TimeInterval
+    let stopState: String
 }
 
 // MARK: - Manager Class
+
 class DataArchiveManager {
     let modelContext: ModelContext
-    
+
     init(modelContext: ModelContext) {
         self.modelContext = modelContext
     }
-    
-    // MARK: - Archive (Export JSON)
+
+    // MARK: - Export
+
     func createArchive(olderThan date: Date? = nil) throws -> URL {
-        // 1. Fetch Data
-        // If date is provided, filter. If nil, export all.
+        // Fetch blocks, filtered by date if provided
         let blockDescriptor = FetchDescriptor<TimeBlock>(
             predicate: date != nil ? #Predicate<TimeBlock> { $0.startTime < date! } : nil
         )
-        let blocks = try modelContext.fetch(blockDescriptor)
-        
+        let blocks     = try modelContext.fetch(blockDescriptor)
         let activities = try modelContext.fetch(FetchDescriptor<Activity>())
-        let sets = try modelContext.fetch(FetchDescriptor<ActivitySet>())
-        
-        // 2. Map to DTOs
-        let blockDTOs = blocks.map { block in
-            TimeBlockDTO(
-                id: block.id,
-                activityID: block.activityID,
-                activityName: block.activityName,
-                activityColor: block.activityColor,
-                startTime: block.startTime,
-                endTime: block.endTime,
-                remarks: block.remarks,
-                blockType: block.blockType,
-                duration: block.duration,
-                switchCount: block.switchCount,
-                totalPauseDuration: block.totalPauseDuration
+        let sets       = try modelContext.fetch(FetchDescriptor<ActivitySet>())
+
+        // Only archive real activity blocks — gaps are computed and need not be stored
+        let blockDTOs: [TimeBlockDTO] = blocks.compactMap { block in
+            guard let activityID = block.activityID else { return nil }
+            return TimeBlockDTO(
+                id:                  block.id,
+                activityID:          activityID,
+                activityName:        block.activityName,
+                activityColor:       block.activityColor,
+                activitySetID:       block.activitySetID,
+                startTime:           block.startTime,
+                endTime:             block.endTime,
+                remarks:             block.remarks,
+                switchCount:         block.switchCount,
+                pauseCount:          block.pauseCount,
+                totalPauseDuration:  block.totalPauseDuration,
+                stopState:           block.stopState
             )
         }
-        
+
         let activityDTOs = activities.map { act in
-            ActivityDTO(id: act.id, name: act.name, emoji: act.emoji, color: act.color, setID: act.setID, sortOrder: act.sortOrder)
+            ActivityDTO(
+                id:        act.id,
+                name:      act.name,
+                emoji:     act.emoji,
+                color:     act.color,
+                setID:     act.setID,
+                sortOrder: act.sortOrder
+            )
         }
-        
+
         let setDTOs = sets.map { set in
             ActivitySetDTO(id: set.id, name: set.name, isActive: set.isActive)
         }
-        
-        // 3. Create Backup Object
+
         let metadata = BackupMetadata(
-            exportDate: Date(),
+            exportDate:  Date(),
             recordCount: blockDTOs.count,
-            appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
+            appVersion:  Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
         )
-        
+
         let backup = BackupData(
-            metadata: metadata,
-            activities: activityDTOs,
-            activitySets: setDTOs,
-            timeBlocks: blockDTOs
+            metadata:      metadata,
+            activities:    activityDTOs,
+            activitySets:  setDTOs,
+            timeBlocks:    blockDTOs
         )
-        
-        // 4. Encode and Write
+
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        
+        encoder.dateEncodingStrategy  = .iso8601
+        encoder.outputFormatting      = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(backup)
-        
+
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd_HHmm"
-        let timestamp = formatter.string(from: Date())
-        let filename = "Cadence_Archive_\(timestamp).json"
-        
+        let filename = "Cadence_Archive_\(formatter.string(from: Date())).json"
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
         try data.write(to: url)
-        
+
         return url
     }
-    
-    // MARK: - Restore (Import JSON)
+
+    // MARK: - Import
+
     func restoreFromArchive(url: URL) throws -> Int {
-        // 1. Decode
-        // Access security scoped resource if necessary (for picking files outside sandbox)
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        
-        let data = try Data(contentsOf: url)
+
+        let data    = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        
         let backup = try decoder.decode(BackupData.self, from: data)
+
         var restoredCount = 0
-        
-        // 2. Insert Data
-        // Strategy: We strictly add data. We do not delete existing data.
-        // We check for ID collisions to prevent duplicates.
-        
-        // A. Restore Sets
+
+        // Restore sets
         let existingSetIDs = try Set(modelContext.fetch(FetchDescriptor<ActivitySet>()).map { $0.id })
-        for setDTO in backup.activitySets {
-            if !existingSetIDs.contains(setDTO.id) {
-                let newSet = ActivitySet(name: setDTO.name, isActive: setDTO.isActive)
-                newSet.id = setDTO.id // Preserve ID
-                modelContext.insert(newSet)
-            }
+        for dto in backup.activitySets where !existingSetIDs.contains(dto.id) {
+            let set    = ActivitySet(name: dto.name, isActive: dto.isActive)
+            set.id     = dto.id
+            modelContext.insert(set)
         }
-        
-        // B. Restore Activities
+
+        // Restore activities
         let existingActivityIDs = try Set(modelContext.fetch(FetchDescriptor<Activity>()).map { $0.id })
-        for actDTO in backup.activities {
-            if !existingActivityIDs.contains(actDTO.id) {
-                let newActivity = Activity(
-                    name: actDTO.name,
-                    color: actDTO.color,
-                    setID: actDTO.setID,
-                    sortOrder: actDTO.sortOrder,
-                    emoji: actDTO.emoji
-                )
-                newActivity.id = actDTO.id // Preserve ID
-                modelContext.insert(newActivity)
-            }
+        for dto in backup.activities where !existingActivityIDs.contains(dto.id) {
+            let act    = Activity(name: dto.name, color: dto.color, setID: dto.setID, sortOrder: dto.sortOrder, emoji: dto.emoji)
+            act.id     = dto.id
+            modelContext.insert(act)
         }
-        
-        // C. Restore TimeBlocks
-        // This can be slow for large datasets, so we do it in a batch if possible
+
+        // Restore time blocks
         let existingBlockIDs = try Set(modelContext.fetch(FetchDescriptor<TimeBlock>()).map { $0.id })
-        
-        for blockDTO in backup.timeBlocks {
-            if !existingBlockIDs.contains(blockDTO.id) {
-                let newBlock = TimeBlock(
-                    activityID: blockDTO.activityID,
-                    activityName: blockDTO.activityName,
-                    activityColor: blockDTO.activityColor,
-                    activitySetID: nil, // We don't strictly need to link this for archives
-                    startTime: blockDTO.startTime,
-                    blockType: blockDTO.blockType
-                )
-                newBlock.id = blockDTO.id
-                newBlock.endTime = blockDTO.endTime
-                newBlock.remarks = blockDTO.remarks
-                newBlock.switchCount = blockDTO.switchCount
-                newBlock.totalPauseDuration = blockDTO.totalPauseDuration
-                newBlock.stopState = blockDTO.endTime != nil ? "stopped" : "ongoing"
-                
-                modelContext.insert(newBlock)
-                restoredCount += 1
-            }
+        for dto in backup.timeBlocks where !existingBlockIDs.contains(dto.id) {
+            let block = TimeBlock(
+                activityID:    dto.activityID,
+                activityName:  dto.activityName,
+                activityColor: dto.activityColor,
+                activitySetID: dto.activitySetID,
+                startTime:     dto.startTime
+            )
+            block.id                 = dto.id
+            block.endTime            = dto.endTime
+            block.remarks            = dto.remarks
+            block.switchCount        = dto.switchCount
+            block.pauseCount         = dto.pauseCount
+            block.totalPauseDuration = dto.totalPauseDuration
+            block.stopState          = dto.stopState
+
+            modelContext.insert(block)
+            restoredCount += 1
         }
-        
+
         try modelContext.save()
         return restoredCount
     }
-    
+
     // MARK: - Prune
+
     func deleteRecords(olderThan date: Date) throws -> Int {
         let descriptor = FetchDescriptor<TimeBlock>(
             predicate: #Predicate<TimeBlock> { $0.startTime < date }
         )
         let count = try modelContext.fetchCount(descriptor)
-        
         try modelContext.delete(model: TimeBlock.self, where: #Predicate<TimeBlock> { $0.startTime < date })
         try modelContext.save()
-        
         return count
     }
 }

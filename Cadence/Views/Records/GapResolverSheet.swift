@@ -1,60 +1,63 @@
-//
-//  GapResolverSheet.swift
-//  Cadence
-//
-//  Convert a gap into a tracked activity
-//  UPDATED: Removed ActivityPickerSheet, simplified to quick actions only
-//
+// GapResolverSheet.swift
+// Cadence
 
 import SwiftUI
 import SwiftData
 
+// MARK: - GapResolverSheet
+
 struct GapResolverSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    
-    let gap: TimeBlock
+
+    // Computed gaps are value types — no binding needed.
+    let gap: ComputedGap
     let onResolved: () -> Void
-    
+
     @Query private var activities: [Activity]
     @Query private var activitySets: [ActivitySet]
-    
-    @State private var adjustedStartTime: Date
-    @State private var adjustedEndTime: Date
-    
-    // Common quick actions
+
+    @State private var adjustedStart: Date
+    @State private var adjustedEnd: Date
     @State private var recentActivities: [Activity] = []
-    
-    init(gap: TimeBlock, onResolved: @escaping () -> Void) {
+
+    init(gap: ComputedGap, onResolved: @escaping () -> Void) {
         self.gap = gap
         self.onResolved = onResolved
-        _adjustedStartTime = State(initialValue: gap.startTime)
-        _adjustedEndTime = State(initialValue: gap.endTime ?? Date())
+        _adjustedStart = State(initialValue: gap.start)
+        _adjustedEnd   = State(initialValue: gap.end)
     }
-    
+
+    // MARK: - Helpers
+
     private var activeSet: ActivitySet? {
         activitySets.first { $0.isActive }
     }
-    
+
     private var setActivities: [Activity] {
         guard let setID = activeSet?.id else { return activities }
-        return activities.filter { $0.setID == setID }.sorted { $0.sortOrder < $1.sortOrder }
+        return activities
+            .filter { $0.setID == setID }
+            .sorted { $0.sortOrder < $1.sortOrder }
     }
-    
+
+    private var adjustedDuration: TimeInterval {
+        adjustedEnd.timeIntervalSince(adjustedStart)
+    }
+
+    private var originalDurationLabel: String {
+        gap.duration.formattedDuration
+    }
+
+    // MARK: - Body
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
-                    // Gap info header
                     gapInfoCard
-                    
-                    // Quick assign section
                     quickAssignSection
-                    
-                    // Time adjustment (optional)
                     timeAdjustmentSection
-                
-                    // Help section
                     helpSection
                 }
                 .padding()
@@ -68,37 +71,37 @@ struct GapResolverSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
-        .onAppear {
-            loadRecentActivities()
-        }
+        .onAppear { loadRecentActivities() }
     }
-    
+
     // MARK: - Subviews
-    
+
     private var gapInfoCard: some View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "questionmark.circle.fill")
                     .font(.title)
                     .foregroundStyle(.orange)
-                
+
                 VStack(alignment: .leading) {
                     Text("Untracked Time")
                         .font(.headline)
-                    
-                    Text("\(gap.startTime.formatted(date: .omitted, time: .shortened)) → \(gap.endTime?.formatted(date: .omitted, time: .shortened) ?? "now")")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    Text(
+                        "\(gap.start.formatted(date: .omitted, time: .shortened)) → " +
+                        "\(gap.end.formatted(date: .omitted, time: .shortened))"
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
-                
+
                 Spacer()
-                
-                Text(gap.duration.formattedDuration)
+
+                Text(originalDurationLabel)
                     .font(.title2)
                     .fontWeight(.bold)
                     .monospacedDigit()
             }
-            
+
             Text("What were you doing during this time?")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -108,23 +111,19 @@ struct GapResolverSheet: View {
         .background(Color.orange.opacity(0.1))
         .cornerRadius(12)
     }
-    
+
     private var quickAssignSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Quick Assign")
                 .font(.headline)
-            
-            // Recently used activities
+
             if !recentActivities.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Recent")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    
-                    LazyVGrid(columns: [
-                        GridItem(.flexible()),
-                        GridItem(.flexible())
-                    ], spacing: 8) {
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                         ForEach(recentActivities.prefix(4)) { activity in
                             ActivityQuickButton(activity: activity) {
                                 resolveGap(with: activity)
@@ -133,25 +132,20 @@ struct GapResolverSheet: View {
                     }
                 }
             }
-            
-            // Current set activities - show more (up to 12)
+
             VStack(alignment: .leading, spacing: 8) {
                 Text(activeSet?.name ?? "Activities")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                
-                LazyVGrid(columns: [
-                    GridItem(.flexible()),
-                    GridItem(.flexible())
-                ], spacing: 8) {
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
                     ForEach(setActivities.prefix(12)) { activity in
                         ActivityQuickButton(activity: activity) {
                             resolveGap(with: activity)
                         }
                     }
                 }
-                
-                // Show hint if there are more activities
+
                 if setActivities.count > 12 {
                     Text("\(setActivities.count - 12) more activities available in full editor")
                         .font(.caption)
@@ -162,7 +156,7 @@ struct GapResolverSheet: View {
             }
         }
     }
-    
+
     private var timeAdjustmentSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             DisclosureGroup {
@@ -170,19 +164,17 @@ struct GapResolverSheet: View {
                     HStack {
                         Text("Start")
                         Spacer()
-                        DatePicker("", selection: $adjustedStartTime, displayedComponents: .hourAndMinute)
+                        DatePicker("", selection: $adjustedStart, displayedComponents: .hourAndMinute)
                             .labelsHidden()
                     }
-                    
                     HStack {
                         Text("End")
                         Spacer()
-                        DatePicker("", selection: $adjustedEndTime, displayedComponents: .hourAndMinute)
+                        DatePicker("", selection: $adjustedEnd, displayedComponents: .hourAndMinute)
                             .labelsHidden()
                     }
-                    
-                    if adjustedStartTime != gap.startTime || adjustedEndTime != (gap.endTime ?? Date()) {
-                        Text("Gap will be adjusted to \(adjustedDuration.formattedDuration)")
+                    if adjustedStart != gap.start || adjustedEnd != gap.end {
+                        Text("Block will cover \(adjustedDuration.formattedDuration)")
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
@@ -197,14 +189,14 @@ struct GapResolverSheet: View {
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }
-    
+
     private var helpSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("Need Help?", systemImage: "questionmark.circle")
+            Label("How gaps work", systemImage: "questionmark.circle")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            
-            Text("Gaps represent untracked time and must be assigned to an activity. If this gap shouldn't exist, you can merge surrounding blocks in the Timeline view.")
+
+            Text("Gaps are untracked time between two activity blocks. Assigning an activity creates a new block for that period. If the gap shouldn't exist, you can merge the surrounding blocks from the Records view.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -212,61 +204,48 @@ struct GapResolverSheet: View {
         .background(Color(.systemGray6))
         .cornerRadius(12)
     }
-    
-    // MARK: - Computed
-    
-    private var adjustedDuration: TimeInterval {
-        adjustedEndTime.timeIntervalSince(adjustedStartTime)
-    }
-    
+
     // MARK: - Actions
-    
+
     private func loadRecentActivities() {
-        // Find activities used in the last 7 days
         let weekAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
-        
+
         let descriptor = FetchDescriptor<TimeBlock>(
             predicate: #Predicate { block in
-                block.startTime >= weekAgo && block.blockType == "activity"
+                block.startTime >= weekAgo && block.activityID != nil
             },
             sortBy: [SortDescriptor(\.startTime, order: .reverse)]
         )
-        
+
         guard let recentBlocks = try? modelContext.fetch(descriptor) else { return }
-        
-        // Get unique activity IDs in order of recency
+
         var seen = Set<UUID>()
-        var recentIDs: [UUID] = []
-        
+        var ids: [UUID] = []
         for block in recentBlocks {
             if let id = block.activityID, !seen.contains(id) {
                 seen.insert(id)
-                recentIDs.append(id)
+                ids.append(id)
             }
         }
-        
-        // Map to activities
-        recentActivities = recentIDs.compactMap { id in
+
+        recentActivities = ids.compactMap { id in
             activities.first { $0.id == id }
         }
     }
-    
+
+    /// Creates a new TimeBlock for the gap period and saves it.
     private func resolveGap(with activity: Activity) {
-        // Convert the gap to an activity
-        gap.activityID = activity.id
-        gap.activityName = activity.name
-        gap.activityColor = activity.color
-        gap.activitySetID = activity.setID
-        gap.blockType = "activity"
-        
-        // Apply time adjustments if changed
-        if adjustedStartTime != gap.startTime {
-            gap.startTime = adjustedStartTime
-        }
-        if adjustedEndTime != (gap.endTime ?? Date()) {
-            gap.endTime = adjustedEndTime
-        }
-        
+        let newBlock = TimeBlock(
+            activityID: activity.id,
+            activityName: activity.name,
+            activityColor: activity.color,
+            activitySetID: activity.setID,
+            startTime: adjustedStart
+        )
+        newBlock.endTime    = adjustedEnd
+        newBlock.stopState  = "stopped"
+
+        modelContext.insert(newBlock)
         try? modelContext.save()
         onResolved()
         dismiss()
@@ -278,7 +257,7 @@ struct GapResolverSheet: View {
 struct ActivityQuickButton: View {
     let activity: Activity
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
@@ -290,7 +269,7 @@ struct ActivityQuickButton: View {
                         .fill(Color(hex: activity.color))
                         .frame(width: 16, height: 16)
                 }
-                
+
                 Text(activity.name)
                     .font(.subheadline)
                     .lineLimit(1)
@@ -298,7 +277,7 @@ struct ActivityQuickButton: View {
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
             .padding(.horizontal, 8)
-            .background(Color(activity.color).opacity(0.15))
+            .background(Color(hex: activity.color).opacity(0.15))
             .foregroundStyle(.primary)
             .cornerRadius(8)
         }

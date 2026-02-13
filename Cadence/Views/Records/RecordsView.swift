@@ -2,132 +2,189 @@
 //  RecordsView.swift
 //  Cadence
 //
-//
 
 import SwiftUI
 import SwiftData
 
 struct RecordsView: View {
     @Environment(\.modelContext) private var modelContext
+
+    // Activity blocks only — gaps are computed, not fetched
     @Query(sort: \TimeBlock.startTime, order: .reverse) private var allTimeBlocks: [TimeBlock]
-    
-    // Filters & Search
+
+    // MARK: - Filter & Search State
+
     @State private var searchText = ""
     @State private var selectedActivity: String? = nil
     @State private var showingFilters = false
-    @State private var hidePauses = false
     @State private var showArchived = false
-    
-    // Edit state
+
+    // MARK: - Edit State
+
     @State private var selectedBlock: TimeBlock?
     @State private var conflictDetector: ConflictDetector?
-    @State private var gapToResolve: TimeBlock?
-    
-    // Multi-select for bulk operations
+    @State private var gapToResolve: ComputedGap?   // Value type — computed, never stored
+
+    // MARK: - Multi-Select State
+
     @State private var isSelectionMode = false
     @State private var selectedBlockIDs: Set<UUID> = []
-    
-    // Error Handling state
+
+    // MARK: - Error State
+
     @State private var showingMergeError = false
     @State private var mergeErrorMessage = ""
-    
-    // MARK: - Computed Properties
-    
+
+    // MARK: - Constants
+
     private let editCutoffDays = 3
-    
-    var filteredBlocks: [TimeBlock] {
-        var blocks = allTimeBlocks
-        
-        // 1. Archive Filter
+
+    // MARK: - Computed Properties
+
+    /// Activity blocks after archive / activity / search filters applied.
+    /// Never contains gap, pause, or untracked rows — those no longer exist as stored blocks.
+    var filteredActivityBlocks: [TimeBlock] {
+        var blocks = allTimeBlocks.filter { $0.activityID != nil }
+
         if !showArchived {
             let cutoff = Calendar.current.date(byAdding: .day, value: -editCutoffDays, to: Date())!
             blocks = blocks.filter { $0.startTime > cutoff }
         }
-        
-        // 2. Pause Filter
-        if hidePauses {
-            blocks = blocks.filter { !$0.isPauseBlock }
-        }
-        
-        // 3. Activity Filter
+
         if let selected = selectedActivity {
             blocks = blocks.filter { $0.activityName == selected }
         }
-        
-        // 4. Search
+
         if !searchText.isEmpty {
-            blocks = blocks.filter { $0.activityName.localizedCaseInsensitiveContains(searchText) || $0.remarks.localizedCaseInsensitiveContains(searchText) }
-        }
-        
-        return blocks
-    }
-    
-    // Identify gaps that need attention
-    var unresolvedGaps: [TimeBlock] {
-        filteredBlocks.filter { $0.isGap }
-    }
-    
-    var groupedBlocks: [String: [TimeBlock]] {
-        Dictionary(grouping: filteredBlocks) { block in
-            if Calendar.current.isDateInToday(block.startTime) {
-                return "Today"
-            } else if Calendar.current.isDateInYesterday(block.startTime) {
-                return "Yesterday"
-            } else {
-                return block.startTime.formatted(date: .abbreviated, time: .omitted)
+            blocks = blocks.filter {
+                $0.activityName.localizedCaseInsensitiveContains(searchText) ||
+                $0.remarks.localizedCaseInsensitiveContains(searchText)
             }
         }
+
+        return blocks
     }
-    
+
+    /// Timeline items (activities + computed gaps) grouped by day label.
+    /// Gaps are only interleaved when no activity or search filter is active,
+    /// because filters break the contiguous day coverage required for accurate gap computation.
+    var groupedTimeline: [String: [TimelineItem]] {
+        let calendar = Calendar.current
+        let canComputeGaps = selectedActivity == nil && searchText.isEmpty
+
+        let grouped = Dictionary(grouping: filteredActivityBlocks) { block -> String in
+            if calendar.isDateInToday(block.startTime)     { return "Today" }
+            if calendar.isDateInYesterday(block.startTime) { return "Yesterday" }
+            return block.startTime.formatted(date: .abbreviated, time: .omitted)
+        }
+
+        var result: [String: [TimelineItem]] = [:]
+
+        for (dayLabel, dayBlocks) in grouped {
+            let sorted = dayBlocks.sorted { $0.startTime < $1.startTime }
+            guard let first = sorted.first else { continue }
+
+            let dayStart = calendar.startOfDay(for: first.startTime)
+            let dayEnd: Date = calendar.isDateInToday(first.startTime)
+                ? Date()
+                : calendar.date(byAdding: .day, value: 1, to: dayStart)!
+
+            // Only compute gaps on unfiltered views so coverage is accurate
+            let gaps: [ComputedGap] = canComputeGaps
+                ? GapCalculator.computeGaps(in: sorted, from: dayStart, to: dayEnd)
+                : []
+
+            var items: [TimelineItem] = sorted.map { .activity($0) }
+            for gap in gaps { items.append(.gap(gap)) }
+            items.sort { $0.startTime < $1.startTime }
+
+            result[dayLabel] = items
+        }
+
+        return result
+    }
+
     var sectionKeys: [String] {
-        // Custom sort to keep Today/Yesterday at top, then descending dates
-        groupedBlocks.keys.sorted { key1, key2 in
-            if key1 == "Today" { return true }
-            if key2 == "Today" { return false }
+        groupedTimeline.keys.sorted { key1, key2 in
+            if key1 == "Today"     { return true }
+            if key2 == "Today"     { return false }
             if key1 == "Yesterday" { return true }
             if key2 == "Yesterday" { return false }
-            
-            // Parse dates for remaining
+
             let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d, yyyy" // Adjust based on locale
-            let d1 = formatter.date(from: key1) ?? Date.distantPast
-            let d2 = formatter.date(from: key2) ?? Date.distantPast
+            formatter.dateFormat = "MMM d, yyyy"
+            let d1 = formatter.date(from: key1) ?? .distantPast
+            let d2 = formatter.date(from: key2) ?? .distantPast
             return d1 > d2
         }
     }
-    
+
+    /// Total number of computed gap rows across all visible days.
+    var totalUnresolvedGapCount: Int {
+        groupedTimeline.values
+            .flatMap { $0 }
+            .filter { if case .gap = $0 { return true } else { return false } }
+            .count
+    }
+
+    /// Total untracked duration across all visible days (for the banner).
+    var totalUnresolvedGapDuration: TimeInterval {
+        groupedTimeline.values
+            .flatMap { $0 }
+            .compactMap { item -> TimeInterval? in
+                if case .gap(let g) = item { return g.duration }
+                return nil
+            }
+            .reduce(0, +)
+    }
+
+    /// First computed gap across all days, for the banner's "Review" action.
+    var firstUnresolvedGap: ComputedGap? {
+        for key in sectionKeys {
+            if let items = groupedTimeline[key] {
+                for item in items {
+                    if case .gap(let g) = item { return g }
+                }
+            }
+        }
+        return nil
+    }
+
     // MARK: - Body
-    
+
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 List {
-                    // FIX 1: Extracted header logic to reduce compiler complexity
                     headerSection
-                    
-                    // Timeline Sections
+
                     ForEach(sectionKeys, id: \.self) { section in
                         Section(header: Text(section)) {
-                            ForEach(groupedBlocks[section] ?? []) { block in
-                                AuditRow(
-                                    block: block,
-                                    isSelected: selectedBlockIDs.contains(block.id),
-                                    isSelectionMode: isSelectionMode,
-                                    isEditable: true,
-                                    onTap: { handleBlockTap(block) },
-                                    onResolveGap: { gapToResolve = block }
-                                )
-                                .swipeActions(edge: .leading) {
-                                    if block.isGap {
-                                        Button("Resolve") { gapToResolve = block }
-                                            .tint(.orange)
+                            ForEach(groupedTimeline[section] ?? []) { item in
+                                switch item {
+                                case .activity(let block):
+                                    AuditRow(
+                                        block: block,
+                                        isSelected: selectedBlockIDs.contains(block.id),
+                                        isSelectionMode: isSelectionMode,
+                                        isEditable: true,
+                                        onTap: { handleBlockTap(block) }
+                                    )
+                                    .swipeActions(edge: .trailing) {
+                                        Button(role: .destructive) {
+                                            deleteBlock(block)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
                                     }
-                                }
-                                .swipeActions(edge: .trailing) {
-                                    Button(role: .destructive) {
-                                        deleteBlock(block)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
+
+                                case .gap(let gap):
+                                    ComputedGapRow(gap: gap) {
+                                        gapToResolve = gap
+                                    }
+                                    .swipeActions(edge: .leading) {
+                                        Button("Resolve") { gapToResolve = gap }
+                                            .tint(.orange)
                                     }
                                 }
                             }
@@ -135,8 +192,7 @@ struct RecordsView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
-                
-                // Bulk Actions Toolbar
+
                 if isSelectionMode {
                     BulkActionToolbar(
                         count: selectedBlockIDs.count,
@@ -158,20 +214,19 @@ struct RecordsView: View {
                         selectedBlockIDs.removeAll()
                     }
                 }
-                
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Toggle("Hide Pauses", isOn: $hidePauses)
+                        // "Hide Pauses" removed — pauses are now inline metadata on activity rows
                         Toggle("Show Archived", isOn: $showArchived)
                         Divider()
                         Button("Filter by Activity...", action: { showingFilters = true })
                     } label: {
                         Image(systemName: "line.3.horizontal.decrease.circle")
-                            .symbolVariant(selectedActivity != nil || hidePauses ? .fill : .none)
+                            .symbolVariant(selectedActivity != nil ? .fill : .none)
                     }
                 }
             }
-            // Sheets
             .sheet(item: $selectedBlock) { block in
                 BlockEditSheet(
                     block: block,
@@ -180,16 +235,14 @@ struct RecordsView: View {
                 )
             }
             .sheet(item: $gapToResolve) { gap in
-                GapResolverSheet(gap: gap) {
-                    try? modelContext.save()
-                }
-                .presentationDetents([.medium, .large])
+                // ComputedGap is Identifiable so .sheet(item:) works directly
+                GapResolverSheet(gap: gap) { }
+                    .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showingFilters) {
-                // FIX 2: Ensure FiltersView is defined (see bottom of file)
                 FiltersView(
                     selectedActivity: $selectedActivity,
-                    activities: Array(Set(allTimeBlocks.map { $0.activityName })).sorted()
+                    activities: Array(Set(filteredActivityBlocks.map { $0.activityName })).sorted()
                 )
                 .presentationDetents([.medium])
             }
@@ -203,20 +256,23 @@ struct RecordsView: View {
             conflictDetector = ConflictDetector(modelContext: modelContext)
         }
     }
-    
-    // MARK: - Helper Views
-    
+
+    // MARK: - Header Section
+
     @ViewBuilder
     private var headerSection: some View {
-        if !unresolvedGaps.isEmpty {
-            GapActionBanner(gaps: unresolvedGaps) {
-                if let firstGap = unresolvedGaps.first {
-                    gapToResolve = firstGap
+        if totalUnresolvedGapCount > 0 {
+            GapActionBanner(
+                gapCount: totalUnresolvedGapCount,
+                totalDuration: totalUnresolvedGapDuration
+            ) {
+                if let first = firstUnresolvedGap {
+                    gapToResolve = first
                 }
             }
             .listRowInsets(EdgeInsets())
             .listRowSeparator(.hidden)
-        } else if filteredBlocks.count > 0 && searchText.isEmpty {
+        } else if !filteredActivityBlocks.isEmpty && searchText.isEmpty {
             HStack {
                 Spacer()
                 Label("Timeline Complete", systemImage: "checkmark.seal.fill")
@@ -229,9 +285,9 @@ struct RecordsView: View {
             .listRowBackground(Color.clear)
         }
     }
-    
+
     // MARK: - Actions
-    
+
     private func handleBlockTap(_ block: TimeBlock) {
         if isSelectionMode {
             if selectedBlockIDs.contains(block.id) {
@@ -240,52 +296,43 @@ struct RecordsView: View {
                 selectedBlockIDs.insert(block.id)
             }
         } else {
-            if block.isGap {
-                gapToResolve = block
-            } else {
-                selectedBlock = block
-            }
+            selectedBlock = block
         }
     }
-    
+
     private func deleteBlock(_ block: TimeBlock) {
         modelContext.delete(block)
         try? modelContext.save()
     }
-    
+
     private func deleteSelected() {
-        let blocksToDelete = allTimeBlocks.filter { selectedBlockIDs.contains($0.id) }
-        for block in blocksToDelete {
-            modelContext.delete(block)
-        }
+        let toDelete = allTimeBlocks.filter { selectedBlockIDs.contains($0.id) }
+        for block in toDelete { modelContext.delete(block) }
         try? modelContext.save()
         isSelectionMode = false
         selectedBlockIDs.removeAll()
     }
-    
+
     private func mergeSelected() {
         let editor = TimeBlockEditor(modelContext: modelContext)
-        // Sort blocks by start time
         let blocksToMerge = allTimeBlocks
             .filter { selectedBlockIDs.contains($0.id) }
             .sorted { $0.startTime < $1.startTime }
-        
-        // FIX 3: Fetch the activity from the first block to pass to mergeBlocks
+
         guard let firstBlock = blocksToMerge.first,
               let activityID = firstBlock.activityID else {
-            mergeErrorMessage = "Cannot merge these blocks. Make sure they are activities, not gaps."
+            mergeErrorMessage = "Cannot merge these blocks. Make sure they are activity blocks."
             showingMergeError = true
             return
         }
-        
-        // We need the actual Activity object to pass to the editor
+
         let descriptor = FetchDescriptor<Activity>(predicate: #Predicate { $0.id == activityID })
         guard let targetActivity = try? modelContext.fetch(descriptor).first else {
-            mergeErrorMessage = "Could not find original activity."
+            mergeErrorMessage = "Could not find the original activity."
             showingMergeError = true
             return
         }
-        
+
         do {
             try editor.mergeBlocks(blocksToMerge, intoActivity: targetActivity)
             try? modelContext.save()
@@ -301,28 +348,25 @@ struct RecordsView: View {
 // MARK: - Gap Action Banner
 
 struct GapActionBanner: View {
-    let gaps: [TimeBlock]
-    let onResolve: () -> Void
-    
-    var totalGapDuration: TimeInterval {
-        gaps.reduce(0) { $0 + $1.duration }
-    }
-    
+    let gapCount: Int
+    let totalDuration: TimeInterval
+    let onReview: () -> Void
+
     var body: some View {
-        Button(action: onResolve) {
+        Button(action: onReview) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Review Unaccounted Time")
                         .font(.headline)
                         .foregroundStyle(.white)
-                    
-                    Text("\(gaps.count) gaps totaling \(totalGapDuration.formattedDuration)")
+
+                    Text("\(gapCount) gap\(gapCount == 1 ? "" : "s") · \(totalDuration.formattedDuration) total")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.9))
                 }
-                
+
                 Spacer()
-                
+
                 HStack(spacing: 4) {
                     Text("Review")
                         .fontWeight(.semibold)
@@ -341,14 +385,14 @@ struct GapActionBanner: View {
     }
 }
 
-// MARK: - Bulk Action Toolbar (Helper)
+// MARK: - Bulk Action Toolbar
 
 struct BulkActionToolbar: View {
     let count: Int
     let onMerge: () -> Void
     let onDelete: () -> Void
     let onCancel: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 0) {
             Divider()
@@ -359,7 +403,7 @@ struct BulkActionToolbar: View {
                     .font(.subheadline)
                     .fontWeight(.medium)
                 Spacer()
-                
+
                 HStack(spacing: 20) {
                     Button(action: onMerge) {
                         VStack(spacing: 2) {
@@ -368,7 +412,7 @@ struct BulkActionToolbar: View {
                         }
                     }
                     .disabled(count < 2)
-                    
+
                     Button(role: .destructive, action: onDelete) {
                         VStack(spacing: 2) {
                             Image(systemName: "trash")
@@ -384,13 +428,13 @@ struct BulkActionToolbar: View {
     }
 }
 
-// MARK: - Filters View (FIX 2)
+// MARK: - Filters View
 
 struct FiltersView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var selectedActivity: String?
     let activities: [String]
-    
+
     var body: some View {
         NavigationStack {
             Form {

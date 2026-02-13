@@ -32,39 +32,35 @@ enum ActivityGoal: String, Codable, CaseIterable {
     }
 }
 
-// MARK: - Tracking Mode Enum
+// MARK: - TrackingMode
+// Controls whether a TimeBlockRule triggers automatic set-switching.
+
 enum TrackingMode: String, Codable, CaseIterable {
-    case on = "on"      // Track activities and gaps
-    case off = "off"    // Tracker paused
-    
+    case on  = "on"    // Rule is active: auto-switch activity sets
+    case off = "off"   // Rule is inactive: no automatic set switching
+
     var displayName: String {
         switch self {
-        case .on: return "Tracking"
-        case .off: return "Paused"
+        case .on:  return "Auto-switch sets"
+        case .off: return "Manual only"
         }
     }
-    
+
     var description: String {
         switch self {
-        case .on: return "Track activities and gaps"
-        case .off: return "Tracker paused"
+        case .on:  return "Automatically switches the active set on schedule"
+        case .off: return "Set switching requires manual selection"
         }
     }
-    
+
     var icon: String {
         switch self {
-        case .on: return "clock.badge.checkmark"
+        case .on:  return "clock.badge.checkmark"
         case .off: return "clock.badge.xmark"
         }
     }
-    
-    var tracksGaps: Bool {
-        self == .on
-    }
-    
-    var autoSwitchesSets: Bool {
-        self == .on
-    }
+
+    var autoSwitchesSets: Bool { self == .on }
 }
 
 // MARK: - Activity Model
@@ -194,27 +190,50 @@ final class TimeBlockRule {
 }
 
 // MARK: - Time Block Model
+//
+// A TimeBlock represents a single tracked activity session.
+// It is the only persisted timeline entity
+//
+
 @Model
 final class TimeBlock {
     var id: UUID
-    var activityID: UUID?  // nil if Gap or Pause
+
+    // MARK: Activity Identity
+    var activityID: UUID?
     var activityName: String
     var activityColor: String
     var activitySetID: UUID?
-    
-    var startTime: Date  // IMMUTABLE in UI
-    var endTime: Date?
-    
+
+    // MARK: Time Boundaries
+    var startTime: Date     // Set at creation; do not edit without conflict check
+    var endTime: Date?      // nil while the block is the active session
+
+    // MARK: Pause State (in-place — no separate pause blocks)
+    // While isPaused == true:
+    //   • The block remains currentTimeBlock in the manager
+    //   • pauseStartTime records when the pause began
+    //   • On resume, elapsed pause time is added to totalPauseDuration
+    //   • If pause exceeds 10 minutes the manager auto-stops the block
     var isPaused: Bool
     var pauseStartTime: Date?
-    var totalPauseDuration: TimeInterval
-    
-    var stopState: String  // "switched", "stopped", "paused", "ongoing"
-    var switchCount: Int
-    var remarks: String
-    var blockType: String  // "activity", "gap", "pause", "untracked"
-    
-    init(activityID: UUID?, activityName: String, activityColor: String, activitySetID: UUID?, startTime: Date, blockType: String = "activity") {
+    var pauseCount: Int          // How many pauses occurred within this block
+    var totalPauseDuration: TimeInterval   // Sum of all completed pauses (seconds)
+
+    // MARK: Session Metadata
+    var stopState: String   // "ongoing" | "switched" | "stopped"
+    var switchCount: Int    // Times the user tapped a different activity mid-session
+    var remarks: String     // Raw text; may contain #tags (see Remark model in future)
+
+    // MARK: - Initializer
+
+    init(
+        activityID: UUID?,
+        activityName: String,
+        activityColor: String,
+        activitySetID: UUID?,
+        startTime: Date
+    ) {
         self.id = UUID()
         self.activityID = activityID
         self.activityName = activityName
@@ -224,83 +243,46 @@ final class TimeBlock {
         self.endTime = nil
         self.isPaused = false
         self.pauseStartTime = nil
+        self.pauseCount = 0
         self.totalPauseDuration = 0
         self.stopState = "ongoing"
         self.switchCount = 0
         self.remarks = ""
-        self.blockType = blockType
     }
-    
+
     convenience init(activity: Activity, startTime: Date) {
         self.init(
             activityID: activity.id,
             activityName: activity.name,
             activityColor: activity.color,
             activitySetID: activity.setID,
-            startTime: startTime,
-            blockType: "activity"
+            startTime: startTime
         )
     }
-    
-    // UPDATED: Orange for Gaps
-    static func createGap(startTime: Date, endTime: Date? = nil) -> TimeBlock {
-        let gap = TimeBlock(
-            activityID: nil,
-            activityName: "Gap",
-            activityColor: "#FF5722", // Deep Orange
-            activitySetID: nil,
-            startTime: startTime,
-            blockType: "gap"
-        )
-        gap.endTime = endTime
-        return gap
-    }
-    
-    // UPDATED: Blue-Gray for Pauses
-    static func createPause(startTime: Date, endTime: Date? = nil) -> TimeBlock {
-        let pause = TimeBlock(
-            activityID: nil,
-            activityName: "Pause",
-            activityColor: "#607D8B", // Blue Gray
-            activitySetID: nil,
-            startTime: startTime,
-            blockType: "pause"
-        )
-        pause.endTime = endTime
-        return pause
-    }
-    
-    // NEW: Light Gray for Untracked
-    static func createUntracked(startTime: Date, endTime: Date? = nil) -> TimeBlock {
-        let untracked = TimeBlock(
-            activityID: nil,
-            activityName: "Tracking Off",
-            activityColor: "#BDBDBD", // Light Gray
-            activitySetID: nil,
-            startTime: startTime,
-            blockType: "untracked"
-        )
-        untracked.endTime = endTime
-        return untracked
-    }
-    
+
+    // MARK: - Computed Properties
+
+    /// Active duration, subtracting pauses.
+    /// For an ongoing paused block, the current pause duration is also excluded.
     var duration: TimeInterval {
-        guard let end = endTime else {
-            let currentDuration = Date().timeIntervalSince(startTime)
-            return currentDuration - totalPauseDuration - (isPaused ? Date().timeIntervalSince(pauseStartTime ?? Date()) : 0)
+        let raw: TimeInterval
+        if let end = endTime {
+            raw = end.timeIntervalSince(startTime)
+        } else {
+            raw = Date().timeIntervalSince(startTime)
         }
-        return end.timeIntervalSince(startTime) - totalPauseDuration
+        let currentPause = isPaused
+            ? Date().timeIntervalSince(pauseStartTime ?? Date())
+            : 0
+        return max(0, raw - totalPauseDuration - currentPause)
     }
-    
+
+    /// True while this is the live session (not yet ended and not paused).
     var isActive: Bool { endTime == nil && !isPaused }
-    var isGap: Bool { blockType == "gap" }
-    var isPauseBlock: Bool { blockType == "pause" }
-    var isUntrackedBlock: Bool { blockType == "untracked" }
-    var isRegularActivity: Bool { blockType == "activity" }
-    
+
     var displayName: String {
-        if isPauseBlock && switchCount > 0 {
-            return "Pause (\(switchCount)x)"
+        if pauseCount > 0 {
+            return "\(activityName) (paused \(pauseCount)×)"
         }
         return activityName
     }
