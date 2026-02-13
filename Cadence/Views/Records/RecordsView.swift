@@ -123,7 +123,7 @@ struct RecordsView: View {
 
             var items: [TimelineItem] = sorted.map { .activity($0) }
             for gap in gaps { items.append(.gap(gap)) }
-            items.sort { $0.startTime < $1.startTime }
+            items.sort { $0.startTime > $1.startTime }
 
             result[dayLabel] = items
         }

@@ -241,6 +241,31 @@ final class TimeBlockRule {
     }
 }
 
+extension TimeBlockRule {
+    func covers(timeRange: ClosedRange<Date>) -> Bool {
+        // Only checking "Paused" rules
+        guard trackingMode == .off else { return false }
+        
+        let calendar = Calendar.current
+        let gapStart = timeRange.lowerBound
+        let gapEnd = timeRange.upperBound
+        
+        // Convert rule start/end to minutes-from-midnight for easy comparison
+        let ruleStartMins = calendar.component(.hour, from: startTime) * 60 + calendar.component(.minute, from: startTime)
+        let ruleEndMins = calendar.component(.hour, from: endTime) * 60 + calendar.component(.minute, from: endTime)
+        
+        let gapStartMins = calendar.component(.hour, from: gapStart) * 60 + calendar.component(.minute, from: gapStart)
+        
+        // Simple check: Does the gap START inside the rule?
+        // (A more robust check would handle wrapping past midnight)
+        if ruleEndMins < ruleStartMins { // Rule wraps over midnight (e.g. 10PM - 7AM)
+            return gapStartMins >= ruleStartMins || gapStartMins < ruleEndMins
+        } else {
+            return gapStartMins >= ruleStartMins && gapStartMins < ruleEndMins
+        }
+    }
+}
+
 // MARK: - TimeBlock Model
 
 @Model

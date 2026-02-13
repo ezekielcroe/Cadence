@@ -109,7 +109,8 @@ struct SettingsView: View {
 
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 12) {
-                            Text("Time Blocks control how gaps are tracked. Set up 'Work Hours' to be Strict (track gaps) and 'Evenings' to be Relaxed.")
+                            Text("Time Blocks can automatically switch your Activity Set (e.g., to 'Work') and control tracking behavior.")
+                            Text("Use 'Tracking On' to enforce accountability (gaps are tracked). Use 'Paused' for sleep to ignore gaps.")
                             Text("The 'Default Mode' applies whenever you are outside of these specific Time Blocks.")
                         }
                         .font(.caption)
