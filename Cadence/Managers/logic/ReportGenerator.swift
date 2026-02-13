@@ -48,6 +48,11 @@ class ReportGenerator {
         let comparisonToPrevious: ComparisonData?
         let topActivities: [ActivityBreakdown]
 
+        // NEW: Semantic/qualitative layers
+        let fragmentation: FragmentationData
+        let tagBreakdown: [TagStat]
+        let highlights: [RemarkHighlight]
+
         struct ActivityBreakdown: Identifiable {
             var id: String { name }
             let name: String
@@ -72,25 +77,81 @@ class ReportGenerator {
         }
     }
 
+    // MARK: - Fragmentation Data
+    //
+    // A high fragmentation index means many short, frequently-interrupted sessions.
+    // It is derived from switchCount relative to tracked hours —
+    // a useful proxy for focus quality that requires no new data collection.
+
+    struct FragmentationData {
+        /// Average context switches per tracked hour
+        let switchesPerHour: Double
+        /// Average duration of a single tracked block (seconds)
+        let averageBlockDuration: TimeInterval
+        /// Qualitative label
+        var label: String {
+            switch switchesPerHour {
+            case ..<2:  return "Focused"
+            case 2..<5: return "Moderate"
+            default:    return "Fragmented"
+            }
+        }
+        var color: String {
+            switch switchesPerHour {
+            case ..<2:  return "#4CAF50"
+            case 2..<5: return "#FF9800"
+            default:    return "#F44336"
+            }
+        }
+    }
+
+    // MARK: - Tag Stats
+
+    struct TagStat: Identifiable {
+        var id: String { tag }
+        let tag: String
+        let count: Int               // how many remarks contain this tag
+        let activities: [String]     // distinct activity names it appears on
+    }
+
+    // MARK: - Remark Highlight
+    //
+    // Surface up to 5 high-value remarks from "Keep High" activities
+    // during the report period — the qualitative record of what happened.
+
+    struct RemarkHighlight: Identifiable {
+        let id: UUID
+        let text: String
+        let activityName: String
+        let activityColor: String
+        let timestamp: Date
+        let tags: [String]
+    }
+
     // MARK: - Generate Report
 
-    func generateReport(for period: ReportPeriod, blocks: [TimeBlock], activities: [Activity]) -> Report {
+    /// Full report including semantic layers from remarks.
+    func generateReport(
+        for period: ReportPeriod,
+        blocks: [TimeBlock],
+        activities: [Activity],
+        remarks: [Remark] = []
+    ) -> Report {
         let calendar = Calendar.current
         let now = Date()
 
         // 1. Determine date ranges
-
         let currentRange: (start: Date, end: Date)
         let previousRange: (start: Date, end: Date)
         var isAverageComparison = false
 
         switch period {
         case .day:
-            let todayStart      = calendar.startOfDay(for: now)
-            let yesterdayStart  = calendar.date(byAdding: .day, value: -1, to: todayStart)!
-            currentRange        = (yesterdayStart, todayStart)
-            let sevenDaysAgo    = calendar.date(byAdding: .day, value: -7, to: yesterdayStart)!
-            previousRange       = (sevenDaysAgo, yesterdayStart)
+            let todayStart     = calendar.startOfDay(for: now)
+            let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart)!
+            currentRange       = (yesterdayStart, todayStart)
+            let sevenDaysAgo   = calendar.date(byAdding: .day, value: -7, to: yesterdayStart)!
+            previousRange      = (sevenDaysAgo, yesterdayStart)
             isAverageComparison = true
 
         case .week:
@@ -101,72 +162,68 @@ class ReportGenerator {
             previousRange        = (twoWeeksAgoStart, lastWeekStart)
 
         case .month:
-            let thisMonthStart       = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
-            currentRange             = (thisMonthStart, now)
-            let lastMonthStart       = calendar.date(byAdding: .month, value: -1, to: thisMonthStart)!
-            let daysInCurrent        = calendar.dateComponents([.day], from: thisMonthStart, to: now).day ?? 0
+            let thisMonthStart        = calendar.date(from: calendar.dateComponents([.year, .month], from: now))!
+            currentRange              = (thisMonthStart, now)
+            let lastMonthStart        = calendar.date(byAdding: .month, value: -1, to: thisMonthStart)!
+            let daysInCurrent         = calendar.dateComponents([.day], from: thisMonthStart, to: now).day ?? 0
             let lastMonthEndCandidate = calendar.date(byAdding: .day, value: daysInCurrent, to: lastMonthStart)!
-            let nextMonthStart       = calendar.date(byAdding: .month, value: 1, to: lastMonthStart)!
-            previousRange            = (lastMonthStart, min(lastMonthEndCandidate, nextMonthStart))
+            let nextMonthStart        = calendar.date(byAdding: .month, value: 1, to: lastMonthStart)!
+            previousRange             = (lastMonthStart, min(lastMonthEndCandidate, nextMonthStart))
         }
 
-        // 2. Filter to activity blocks only within each range
-        //    There are no gap/pause/untracked block types anymore — every stored TimeBlock
-        //    is a real activity session. activityID being non-nil is the defensive check.
+        // 2. Filter blocks
         let currentBlocks  = filterBlocks(blocks, in: currentRange)
         let previousBlocks = filterBlocks(blocks, in: previousRange)
 
-        // 3. Calculate durations
-
+        // 3. Durations
         let currentTotal = calculateTotalDuration(currentBlocks)
-
-        // Unaccounted time is the space between activity blocks — computed, never stored.
         let unaccountedTotal = GapCalculator.totalUnaccountedDuration(
-            in: currentBlocks,
-            from: currentRange.start,
-            to: currentRange.end
+            in: currentBlocks, from: currentRange.start, to: currentRange.end
         )
 
         var previousTotal = calculateTotalDuration(previousBlocks)
         if isAverageComparison { previousTotal /= 7.0 }
 
         // 4. Activity breakdown
-
         let breakdown = generateBreakdown(blocks: currentBlocks, totalDuration: currentTotal)
 
         var previousBreakdown = generateBreakdown(blocks: previousBlocks, totalDuration: 1)
         if isAverageComparison {
             previousBreakdown = previousBreakdown.map {
-                Report.ActivityBreakdown(
-                    name: $0.name,
-                    duration: $0.duration / 7.0,
-                    percentage: $0.percentage,
-                    color: $0.color
-                )
+                Report.ActivityBreakdown(name: $0.name, duration: $0.duration / 7.0,
+                                         percentage: $0.percentage, color: $0.color)
             }
         }
 
-        // 5. Comparison data
-
+        // 5. Comparison
         let activityChanges = calculateActivityChanges(
-            current: breakdown,
-            previous: previousBreakdown,
-            activities: activities
+            current: breakdown, previous: previousBreakdown, activities: activities
         )
-
         let comparison = Report.ComparisonData(
-            periodLabel:       period.displayName,
-            comparisonLabel:   period.comparisonDescription,
-            currentDuration:   currentTotal,
-            previousDuration:  previousTotal,
-            activityChanges:   activityChanges
+            periodLabel: period.displayName,
+            comparisonLabel: period.comparisonDescription,
+            currentDuration: currentTotal,
+            previousDuration: previousTotal,
+            activityChanges: activityChanges
         )
 
-        // 6. Date range label
+        // 6. Fragmentation index
+        let fragmentation = calculateFragmentation(blocks: currentBlocks)
 
+        // 7. Tag breakdown (from remarks in current range)
+        let currentBlockIDs = Set(currentBlocks.map { $0.id })
+        let currentRemarks  = remarks.filter { currentBlockIDs.contains($0.timeBlockID) }
+        let tagBreakdown    = calculateTagBreakdown(remarks: currentRemarks, blocks: currentBlocks)
+
+        // 8. Highlights — top remarks from high-value (goal = .increase) activities
+        let highlights = generateHighlights(
+            remarks: currentRemarks, blocks: currentBlocks, activities: activities
+        )
+
+        // 9. Date range label
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "MMM d"
-        let rangeString = "\(dateFormatter.string(from: currentRange.start)) - \(dateFormatter.string(from: currentRange.end.addingTimeInterval(-1)))"
+        let rangeString = "\(dateFormatter.string(from: currentRange.start)) – \(dateFormatter.string(from: currentRange.end.addingTimeInterval(-1)))"
 
         return Report(
             period:               period,
@@ -176,17 +233,90 @@ class ReportGenerator {
             totalBlocks:          currentBlocks.count,
             activityBreakdown:    breakdown,
             comparisonToPrevious: comparison,
-            topActivities:        Array(breakdown.prefix(5))
+            topActivities:        Array(breakdown.prefix(5)),
+            fragmentation:        fragmentation,
+            tagBreakdown:         tagBreakdown,
+            highlights:           highlights
         )
+    }
+
+    // MARK: - Fragmentation Calculation
+
+    private func calculateFragmentation(blocks: [TimeBlock]) -> FragmentationData {
+        guard !blocks.isEmpty else {
+            return FragmentationData(switchesPerHour: 0, averageBlockDuration: 0)
+        }
+        let totalSwitches = Double(blocks.reduce(0) { $0 + $1.switchCount })
+        let totalHours    = calculateTotalDuration(blocks) / 3600
+        let switchesPerHr = totalHours > 0 ? totalSwitches / totalHours : 0
+        let avgBlock      = calculateTotalDuration(blocks) / Double(blocks.count)
+        return FragmentationData(switchesPerHour: switchesPerHr, averageBlockDuration: avgBlock)
+    }
+
+    // MARK: - Tag Breakdown
+
+    private func calculateTagBreakdown(remarks: [Remark], blocks: [TimeBlock]) -> [TagStat] {
+        let blockLookup = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0.activityName) })
+
+        var tagData: [String: (count: Int, activities: Set<String>)] = [:]
+        for remark in remarks {
+            let activityName = blockLookup[remark.timeBlockID] ?? "Unknown"
+            for tag in remark.tags {
+                var existing = tagData[tag] ?? (count: 0, activities: Set<String>())
+                existing.count += 1
+                existing.activities.insert(activityName)
+                tagData[tag] = existing
+            }
+        }
+
+        return tagData
+            .map { tag, data in
+                TagStat(tag: tag, count: data.count, activities: Array(data.activities).sorted())
+            }
+            .sorted { $0.count > $1.count }
+    }
+
+    // MARK: - Highlights
+
+    private func generateHighlights(
+        remarks: [Remark],
+        blocks: [TimeBlock],
+        activities: [Activity]
+    ) -> [RemarkHighlight] {
+        // Build lookup structures
+        let blockLookup      = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
+        let activityGoalLookup: [String: ActivityGoal] = Dictionary(
+            activities.map { ($0.name, $0.goal) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        // Prioritise remarks on "Keep High" activities, then others
+        let sorted = remarks.sorted { a, b in
+            let aGoal = blockLookup[a.timeBlockID].flatMap { activityGoalLookup[$0.activityName] } ?? .neutral
+            let bGoal = blockLookup[b.timeBlockID].flatMap { activityGoalLookup[$0.activityName] } ?? .neutral
+            if aGoal == .increase && bGoal != .increase { return true }
+            if aGoal != .increase && bGoal == .increase { return false }
+            return a.timestamp > b.timestamp  // most recent first within same priority
+        }
+
+        return sorted.prefix(6).compactMap { remark in
+            guard let block = blockLookup[remark.timeBlockID] else { return nil }
+            return RemarkHighlight(
+                id:            remark.id,
+                text:          remark.text,
+                activityName:  block.activityName,
+                activityColor: block.activityColor,
+                timestamp:     remark.timestamp,
+                tags:          remark.tags
+            )
+        }
     }
 
     // MARK: - Helpers
 
-    /// Returns activity blocks within a date range.
-    /// Blocks are clipped to the range boundary if they span across it.
     private func filterBlocks(_ blocks: [TimeBlock], in range: (start: Date, end: Date)) -> [TimeBlock] {
         blocks.filter { block in
-            guard block.activityID != nil else { return false }   // activity blocks only
+            guard block.activityID != nil else { return false }
             guard block.startTime < range.end else { return false }
             let blockEnd = block.endTime ?? Date()
             return blockEnd > range.start
@@ -197,55 +327,49 @@ class ReportGenerator {
         blocks.reduce(0) { $0 + $1.duration }
     }
 
-    /// Groups blocks by activity name and sums their durations.
-    /// Uses `activityName` (not `displayName`) so pause annotations don't
-    /// fragment a single activity into multiple breakdown rows.
     private func generateBreakdown(blocks: [TimeBlock], totalDuration: TimeInterval) -> [Report.ActivityBreakdown] {
         var dict: [String: (duration: TimeInterval, color: String)] = [:]
-
         for block in blocks {
-            let name = block.activityName   // raw name, no pause suffix
-            let existing = dict[name]
-            dict[name] = ((existing?.duration ?? 0) + block.duration, block.activityColor)
+            let existing = dict[block.activityName]
+            dict[block.activityName] = ((existing?.duration ?? 0) + block.duration, block.activityColor)
         }
-
         return dict
             .map { name, value in
                 Report.ActivityBreakdown(
-                    name:       name,
-                    duration:   value.duration,
+                    name: name,
+                    duration: value.duration,
                     percentage: totalDuration > 0 ? (value.duration / totalDuration) : 0,
-                    color:      value.color
+                    color: value.color
                 )
             }
             .sorted { $0.duration > $1.duration }
     }
 
     private func calculateActivityChanges(
-        current:    [Report.ActivityBreakdown],
-        previous:   [Report.ActivityBreakdown],
+        current: [Report.ActivityBreakdown],
+        previous: [Report.ActivityBreakdown],
         activities: [Activity]
     ) -> [ActivityChange] {
-
         var changes: [ActivityChange] = []
-        let prevDict = Dictionary(uniqueKeysWithValues: previous.map { ($0.name, $0.duration) })
+        let prevDict = Dictionary(
+            previous.map { ($0.name, $0.duration) },
+            uniquingKeysWith: { first, _ in first }
+        )
 
         for item in current {
             changes.append(ActivityChange(
-                name:             item.name,
-                currentDuration:  item.duration,
+                name: item.name,
+                currentDuration: item.duration,
                 previousDuration: prevDict[item.name] ?? 0,
-                goal:             activities.first { $0.name == item.name }?.goal ?? .neutral
+                goal: activities.first { $0.name == item.name }?.goal ?? .neutral
             ))
         }
-
-        // Activities that existed before but are absent this period
         for item in previous where !current.contains(where: { $0.name == item.name }) {
             changes.append(ActivityChange(
-                name:             item.name,
-                currentDuration:  0,
+                name: item.name,
+                currentDuration: 0,
                 previousDuration: item.duration,
-                goal:             activities.first { $0.name == item.name }?.goal ?? .neutral
+                goal: activities.first { $0.name == item.name }?.goal ?? .neutral
             ))
         }
 
@@ -259,6 +383,7 @@ class ReportGenerator {
         text += "Period: \(report.dateRange)\n\n"
         text += "Total Tracked: \(report.totalDuration.formattedDuration)\n"
         text += "Unaccounted:   \(report.unaccountedDuration.formattedDuration)\n"
+        text += "Focus:         \(report.fragmentation.label) (\(String(format: "%.1f", report.fragmentation.switchesPerHour)) switches/hr)\n"
 
         if let comp = report.comparisonToPrevious {
             let sign = comp.durationChange >= 0 ? "+" : ""
@@ -268,6 +393,22 @@ class ReportGenerator {
         text += "\nTop Activities:\n"
         for item in report.topActivities.prefix(5) {
             text += "• \(item.name): \(item.duration.formattedDuration)\n"
+        }
+
+        if !report.tagBreakdown.isEmpty {
+            text += "\nTop Tags:\n"
+            for tag in report.tagBreakdown.prefix(5) {
+                text += "• #\(tag.tag): \(tag.count)×\n"
+            }
+        }
+
+        if !report.highlights.isEmpty {
+            text += "\nHighlights:\n"
+            for h in report.highlights {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "HH:mm"
+                text += "[\(formatter.string(from: h.timestamp))] \(h.activityName): \(h.text)\n"
+            }
         }
 
         return text

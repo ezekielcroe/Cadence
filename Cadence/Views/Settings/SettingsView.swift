@@ -3,40 +3,54 @@ import SwiftData
 import UserNotifications
 
 // MARK: - App Theme Enum
+
 enum AppTheme: String, CaseIterable, Identifiable {
     case system = "System"
-    case light = "Light"
-    case dark = "Dark"
-    
+    case light  = "Light"
+    case dark   = "Dark"
+
     var id: String { rawValue }
-    
+
     var colorScheme: ColorScheme? {
         switch self {
         case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
+        case .light:  return .light
+        case .dark:   return .dark
         }
     }
 }
 
 // MARK: - Main Settings View
+
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
-    
+
     var body: some View {
         NavigationStack {
             Form {
+
+                // MARK: - Activities
+                Section {
+                    NavigationLink {
+                        SetsView()
+                    } label: {
+                        Label("Activity Sets", systemImage: "square.grid.2x2")
+                    }
+                } header: {
+                    Text("Activities")
+                } footer: {
+                    Text("Manage your activity sets and the activities within each set.")
+                }
+
                 // MARK: - General
                 Section {
-                    // Appearance Picker
                     Picker("Appearance", selection: $appTheme) {
                         ForEach(AppTheme.allCases) { theme in
                             Text(theme.rawValue).tag(theme)
                         }
                     }
-                    
-                    // Interface (Haptics)
+
                     NavigationLink {
                         InterfaceSettingsView()
                     } label: {
@@ -45,21 +59,21 @@ struct SettingsView: View {
                 } header: {
                     Text("General")
                 }
-                
-                // MARK: - Tracking Logic
+
+                // MARK: - Tracking Behavior
                 Section {
                     NavigationLink {
                         DefaultTrackingModeView()
                     } label: {
                         Label("Default Tracking Mode", systemImage: "clock.badge.questionmark")
                     }
-                    
+
                     NavigationLink {
                         BackgroundTrackingView()
                     } label: {
                         Label("Background Tracking", systemImage: "moon.fill")
                     }
-                    
+
                     NavigationLink {
                         NotificationSettingsView()
                     } label: {
@@ -70,8 +84,8 @@ struct SettingsView: View {
                 } footer: {
                     Text("Configure how Cadence records time when you switch contexts or leave the app.")
                 }
-                
-                // MARK: - Data Management
+
+                // MARK: - Data & Storage
                 Section {
                     NavigationLink {
                         DataManagementView()
@@ -83,8 +97,8 @@ struct SettingsView: View {
                 } footer: {
                     Text("Export CSVs, create backups, or archive old records.")
                 }
-                
-                // MARK: - About & Help
+
+                // MARK: - About
                 Section {
                     HStack {
                         Text("Version")
@@ -92,7 +106,7 @@ struct SettingsView: View {
                         Text("1.0.0 (Phase 1)")
                             .foregroundStyle(.secondary)
                     }
-                    
+
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 12) {
                             Text("Time Blocks control how gaps are tracked. Set up 'Work Hours' to be Strict (track gaps) and 'Evenings' to be Relaxed.")
@@ -113,10 +127,10 @@ struct SettingsView: View {
 }
 
 // MARK: - Default Tracking Mode View
+
 struct DefaultTrackingModeView: View {
-    // Reads/Writes directly to UserDefaults
     @AppStorage("defaultTrackingMode") private var defaultTrackingModeRaw: String = TrackingMode.on.rawValue
-    
+
     var body: some View {
         Form {
             Section {
@@ -124,9 +138,8 @@ struct DefaultTrackingModeView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             Section {
-                // FIX: Define Binding inline to access AppStorage directly
                 Toggle("Enable Tracking by Default", isOn: Binding(
                     get: { defaultTrackingModeRaw == TrackingMode.on.rawValue },
                     set: { newValue in
@@ -138,32 +151,30 @@ struct DefaultTrackingModeView: View {
             } footer: {
                 Text("When enabled, the app will track activities and create gaps for untracked time. When disabled, the tracker is paused.")
             }
-            
+
             Section {
                 VStack(alignment: .leading, spacing: 12) {
                     Label("How Tracking Works", systemImage: "info.circle")
                         .font(.headline)
-                    
+
                     VStack(alignment: .leading, spacing: 8) {
                         HStack(alignment: .top) {
                             Image(systemName: "clock.badge.checkmark")
                                 .foregroundStyle(.blue)
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Tracking On")
-                                    .fontWeight(.medium)
+                                Text("Tracking On").fontWeight(.medium)
                                 Text("• Records all activities\n• Creates gaps when you stop\n• Auto-switches activity sets")
                                     .font(.caption)
                             }
                         }
-                        
+
                         HStack(alignment: .top) {
                             Image(systemName: "clock.badge.xmark")
                                 .foregroundStyle(.gray)
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Tracking Off")
-                                    .fontWeight(.medium)
+                                Text("Tracking Off").fontWeight(.medium)
                                 Text("• Tracker is paused\n• No activities recorded\n• Use for sleep or downtime")
                                     .font(.caption)
                             }
@@ -182,20 +193,20 @@ struct DefaultTrackingModeView: View {
 }
 
 // MARK: - Background Tracking View
+
 struct BackgroundTrackingView: View {
-    // REFACTORED: Use AppStorage directly
     @AppStorage("maxBackgroundDuration") private var maxBackgroundDuration: Double = 900
-    
+
     let durationOptions: [(label: String, value: TimeInterval)] = [
-        ("10 minutes", 600),
-        ("15 minutes", 900),
+        ("10 minutes",  600),
+        ("15 minutes",  900),
         ("30 minutes", 1800),
         ("45 minutes", 2700),
-        ("1 hour", 3600),
-        ("2 hours", 7200),
+        ("1 hour",     3600),
+        ("2 hours",    7200),
         ("Never stop", .infinity)
     ]
-    
+
     var body: some View {
         Form {
             Section {
@@ -203,7 +214,7 @@ struct BackgroundTrackingView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             Section {
                 Picker("Duration", selection: $maxBackgroundDuration) {
                     ForEach(durationOptions, id: \.value) { option in
@@ -220,17 +231,17 @@ struct BackgroundTrackingView: View {
                     Text("Activity will stop after \(maxBackgroundDuration.formattedDuration) in background")
                 }
             }
-            
+
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("How Background Tracking Works", systemImage: "info.circle")
                         .font(.headline)
-                    
+
                     Text("• When you background the app, we record the timestamp")
                     Text("• When you return, we calculate elapsed time and add it to your activity")
-                    Text("• This doesn't drain battery - no actual background processing happens")
+                    Text("• This doesn't drain battery — no actual background processing happens")
                     Text("• To switch activities, you must open the app")
-                    
+
                     if maxBackgroundDuration != .infinity {
                         Text("\n• If you're away longer than \(maxBackgroundDuration.formattedDuration), the activity stops at that time")
                             .foregroundStyle(.orange)
@@ -248,11 +259,11 @@ struct BackgroundTrackingView: View {
 }
 
 // MARK: - Notification Settings View
+
 struct NotificationSettingsView: View {
-    // REFACTORED: Use AppStorage directly
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
     @State private var showingPermissionAlert = false
-    
+
     var body: some View {
         Form {
             Section {
@@ -260,32 +271,26 @@ struct NotificationSettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             Section {
                 Toggle("Enable Notifications", isOn: $notificationsEnabled)
                     .onChange(of: notificationsEnabled) { _, newValue in
-                        if newValue {
-                            checkAndRequestNotificationPermission()
-                        }
-                        // We don't need to manually update TimeTrackingManager;
-                        // AppStorage writes to UserDefaults, which the Manager reads.
+                        if newValue { checkAndRequestNotificationPermission() }
                     }
             } header: {
                 Text("Notifications")
             }
-            
+
             if notificationsEnabled {
                 Section {
                     HStack {
-                        Image(systemName: "bell.badge")
-                            .foregroundStyle(.orange)
+                        Image(systemName: "bell.badge").foregroundStyle(.orange)
                         Text("You'll receive reminders before activities stop in background")
                             .font(.caption)
                     }
-                    
+
                     HStack {
-                        Image(systemName: "arrow.triangle.swap")
-                            .foregroundStyle(.blue)
+                        Image(systemName: "arrow.triangle.swap").foregroundStyle(.blue)
                         Text("You'll be notified when activity sets change automatically")
                             .font(.caption)
                     }
@@ -296,23 +301,19 @@ struct NotificationSettingsView: View {
         }
         .navigationTitle("Notifications")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            checkNotificationPermission()
-        }
+        .onAppear { checkNotificationPermission() }
         .alert("Notifications Disabled", isPresented: $showingPermissionAlert) {
             Button("Open Settings") {
                 if let url = URL(string: UIApplication.openSettingsURLString) {
                     UIApplication.shared.open(url)
                 }
             }
-            Button("Cancel", role: .cancel) {
-                notificationsEnabled = false
-            }
+            Button("Cancel", role: .cancel) { notificationsEnabled = false }
         } message: {
             Text("Please enable notifications in Settings to receive activity reminders")
         }
     }
-    
+
     private func checkAndRequestNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
@@ -330,36 +331,31 @@ struct NotificationSettingsView: View {
             }
         }
     }
-    
+
     private func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             DispatchQueue.main.async {
-                if granted {
-                    notificationsEnabled = true
-                } else {
-                    notificationsEnabled = false
-                    showingPermissionAlert = true
-                }
+                notificationsEnabled = granted
+                if !granted { showingPermissionAlert = true }
             }
         }
     }
-    
+
     private func checkNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
-                if settings.authorizationStatus == .denied {
-                    notificationsEnabled = false
-                }
+                if settings.authorizationStatus == .denied { notificationsEnabled = false }
             }
         }
     }
 }
 
 // MARK: - Interface Settings View
+
 struct InterfaceSettingsView: View {
-    @AppStorage("hapticsEnabled") private var hapticsEnabled = true
+    @AppStorage("hapticsEnabled")  private var hapticsEnabled  = true
     @AppStorage("hapticIntensity") private var hapticIntensity = 1.0
-    
+
     var body: some View {
         Form {
             Section {
@@ -367,23 +363,20 @@ struct InterfaceSettingsView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
-            
+
             Section {
                 Toggle("Haptic Feedback", isOn: $hapticsEnabled)
-                
+
                 if hapticsEnabled {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Intensity")
-                            .font(.subheadline)
-                        
+                        Text("Intensity").font(.subheadline)
+
                         Slider(value: $hapticIntensity, in: 0.5...1.5, step: 0.25) {
                             Text("Intensity")
                         } minimumValueLabel: {
-                            Text("Soft")
-                                .font(.caption)
+                            Text("Soft").font(.caption)
                         } maximumValueLabel: {
-                            Text("Strong")
-                                .font(.caption)
+                            Text("Strong").font(.caption)
                         }
                         .onChange(of: hapticIntensity) { _, _ in
                             HapticManager.shared.impact(style: .medium, intensity: hapticIntensity)
@@ -402,58 +395,55 @@ struct InterfaceSettingsView: View {
 }
 
 // MARK: - Haptic Manager
+
 class HapticManager {
     static let shared = HapticManager()
-    
-    private let impactLight = UIImpactFeedbackGenerator(style: .light)
-    private let impactMedium = UIImpactFeedbackGenerator(style: .medium)
-    private let impactHeavy = UIImpactFeedbackGenerator(style: .heavy)
-    private let selectionGenerator = UISelectionFeedbackGenerator()
-    private let notificationGenerator = UINotificationFeedbackGenerator()
-    
+
+    private let impactLight     = UIImpactFeedbackGenerator(style: .light)
+    private let impactMedium    = UIImpactFeedbackGenerator(style: .medium)
+    private let impactHeavy     = UIImpactFeedbackGenerator(style: .heavy)
+    private let selectionGen    = UISelectionFeedbackGenerator()
+    private let notificationGen = UINotificationFeedbackGenerator()
+
     private init() {
         impactLight.prepare()
         impactMedium.prepare()
         impactHeavy.prepare()
-        selectionGenerator.prepare()
-        notificationGenerator.prepare()
+        selectionGen.prepare()
+        notificationGen.prepare()
     }
-    
+
     func impact(style: UIImpactFeedbackGenerator.FeedbackStyle = .medium, intensity: CGFloat = 1.0) {
         guard UserDefaults.standard.bool(forKey: "hapticsEnabled") else { return }
-        
         switch style {
-        case .light:
-            impactLight.impactOccurred(intensity: intensity)
-        case .medium:
-            impactMedium.impactOccurred(intensity: intensity)
-        case .heavy:
-            impactHeavy.impactOccurred(intensity: intensity)
-        case .soft:
-            // .soft fallback for older iOS if needed, or mapped to light with lower intensity
-            impactLight.impactOccurred(intensity: intensity * 0.7)
-        case .rigid:
-            impactHeavy.impactOccurred(intensity: intensity * 1.2)
-        @unknown default:
-            impactMedium.impactOccurred(intensity: intensity)
+        case .light:  impactLight.impactOccurred(intensity: intensity)
+        case .medium: impactMedium.impactOccurred(intensity: intensity)
+        case .heavy:  impactHeavy.impactOccurred(intensity: intensity)
+        case .soft:   impactLight.impactOccurred(intensity: intensity * 0.7)
+        case .rigid:  impactHeavy.impactOccurred(intensity: intensity * 1.2)
+        @unknown default: impactMedium.impactOccurred(intensity: intensity)
         }
     }
-    
+
     func selection() {
         guard UserDefaults.standard.bool(forKey: "hapticsEnabled") else { return }
-        selectionGenerator.selectionChanged()
+        selectionGen.selectionChanged()
     }
-    
+
     func notification(type: UINotificationFeedbackGenerator.FeedbackType) {
         guard UserDefaults.standard.bool(forKey: "hapticsEnabled") else { return }
-        notificationGenerator.notificationOccurred(type)
+        notificationGen.notificationOccurred(type)
     }
 }
 
+// MARK: - Preview
+
 #Preview {
     let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(for: Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self, configurations: config)
-    
-    return SettingsView()
-        .modelContainer(container)
+    let container = try! ModelContainer(
+        for: Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self,
+             Remark.self, DayNote.self,
+        configurations: config
+    )
+    return SettingsView().modelContainer(container)
 }

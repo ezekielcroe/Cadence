@@ -37,7 +37,9 @@ struct GapResolverSheet: View {
     private var setActivities: [Activity] {
         guard let setID = activeSet?.id else { return activities }
         return activities
-            .filter { $0.setID == setID }
+            .filter { activity in
+                activity.sets.contains(where: { $0.id == setID })
+            }
             .sorted { $0.sortOrder < $1.sortOrder }
     }
 
@@ -239,7 +241,7 @@ struct GapResolverSheet: View {
             activityID: activity.id,
             activityName: activity.name,
             activityColor: activity.color,
-            activitySetID: activity.setID,
+            activitySetID: activeSet?.id,
             startTime: adjustedStart
         )
         newBlock.endTime    = adjustedEnd
@@ -284,3 +286,4 @@ struct ActivityQuickButton: View {
         .buttonStyle(.plain)
     }
 }
+

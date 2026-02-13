@@ -14,7 +14,9 @@ struct CadenceApp: App {
                 Activity.self,
                 ActivitySet.self,
                 TimeBlock.self,
-                TimeBlockRule.self
+                TimeBlockRule.self,
+                Remark.self,       // NEW: first-class remarks
+                DayNote.self       // NEW: daily intention + reflection
             ])
 
             modelContainer = try ModelContainer(
@@ -44,23 +46,18 @@ struct CadenceApp: App {
     private func setupDefaultData() {
         let context = modelContainer.mainContext
 
-        // Only seed default content on a completely fresh install
         let existingSets = (try? context.fetch(FetchDescriptor<ActivitySet>())) ?? []
         guard existingSets.isEmpty else { return }
 
         // MARK: Sets
-
-        let workSet    = ActivitySet(name: "Work",     isActive: true)
+        let workSet     = ActivitySet(name: "Work",     isActive: true)
         let personalSet = ActivitySet(name: "Personal", isActive: false)
-        let weekendSet  = ActivitySet(name: "Weekend",  isActive: false)
 
         context.insert(workSet)
         context.insert(personalSet)
-        context.insert(weekendSet)
 
         // MARK: Work Activities
-
-        let workActivities: [(String, String, String)] = [
+        let workActivitiesData: [(String, String, String)] = [
             ("Focused Work", "#4CAF50", "🎯"),
             ("Meetings",     "#2196F3", "👥"),
             ("Calls",        "#03A9F4", "📞"),
@@ -74,71 +71,51 @@ struct CadenceApp: App {
             ("Break",        "#795548", "☕"),
             ("Commute",      "#607D8B", "🚗"),
         ]
-        for (i, a) in workActivities.enumerated() {
-            context.insert(Activity(name: a.0, color: a.1, setID: workSet.id, sortOrder: i, emoji: a.2))
+        var workActivitiesArray: [Activity] = []
+        for (i, a) in workActivitiesData.enumerated() {
+            let activity = Activity(name: a.0, color: a.1, sortOrder: i, emoji: a.2)
+            context.insert(activity)
+            workActivitiesArray.append(activity)
         }
+        workSet.activities = workActivitiesArray
 
         // MARK: Personal Activities
-
-        let personalActivities: [(String, String, String)] = [
-            ("Sleep",          "#3F51B5", "😴"),
-            ("Exercise",       "#F44336", "💪"),
-            ("Self-Care",      "#E91E63", "🧘"),
-            ("Eating",         "#FF9800", "🍽️"),
-            ("Cooking",        "#FF5722", "👨‍🍳"),
-            ("Family",         "#E91E63", "👨‍👩‍👧"),
-            ("Socializing",    "#9C27B0", "🎉"),
-            ("Chores",         "#607D8B", "🧹"),
-            ("Travel",         "#9E9E9E", "🚶"),
-            ("Entertainment",  "#673AB7", "📺"),
-            ("Hobbies",        "#009688", "🎨"),
-            ("Downtime",       "#795548", "🛋️"),
+        let personalActivitiesData: [(String, String, String)] = [
+            ("Sleep",         "#3F51B5", "😴"),
+            ("Exercise",      "#F44336", "💪"),
+            ("Self-Care",     "#E91E63", "🧘"),
+            ("Eating",        "#FF9800", "🍽️"),
+            ("Cooking",       "#FF5722", "👨‍🍳"),
+            ("Family",        "#E91E63", "👨‍👩‍👧"),
+            ("Socializing",   "#9C27B0", "🎉"),
+            ("Chores",        "#607D8B", "🧹"),
+            ("Travel",        "#9E9E9E", "🚶"),
+            ("Entertainment", "#673AB7", "📺"),
+            ("Hobbies",       "#009688", "🎨"),
+            ("Downtime",      "#795548", "🛋️"),
         ]
-        for (i, a) in personalActivities.enumerated() {
-            context.insert(Activity(name: a.0, color: a.1, setID: personalSet.id, sortOrder: i, emoji: a.2))
+        var personalActivitiesArray: [Activity] = []
+        for (i, a) in personalActivitiesData.enumerated() {
+            let activity = Activity(name: a.0, color: a.1, sortOrder: i, emoji: a.2)
+            context.insert(activity)
+            personalActivitiesArray.append(activity)
         }
-
-        // MARK: Weekend Activities
-
-        let weekendActivities: [(String, String, String)] = [
-            ("Sleep",          "#3F51B5", "😴"),
-            ("Eating",         "#FF9800", "🍽️"),
-            ("Cooking",        "#FF5722", "👨‍🍳"),
-            ("Exercise",       "#F44336", "💪"),
-            ("Outdoors",       "#4CAF50", "🌳"),
-            ("Family",         "#E91E63", "👨‍👩‍👧"),
-            ("Socializing",    "#9C27B0", "🍻"),
-            ("Chores",         "#607D8B", "🧹"),
-            ("Errands",        "#8BC34A", "🛒"),
-            ("Travel",         "#9E9E9E", "🚗"),
-            ("Entertainment",  "#673AB7", "📺"),
-            ("Hobbies",        "#009688", "🎨"),
-        ]
-        for (i, a) in weekendActivities.enumerated() {
-            context.insert(Activity(name: a.0, color: a.1, setID: weekendSet.id, sortOrder: i, emoji: a.2))
-        }
+        personalSet.activities = personalActivitiesArray
 
         // MARK: Time Block Rules
-        //
-        // TrackingMode now controls set auto-switching only — gap creation is no longer
-        // a tracking-mode concept. All three rules use .on so their linked sets become
-        // active when the time window is entered.
-
         let calendar = Calendar.current
 
-        let workStart      = calendar.date(from: DateComponents(hour: 8,  minute: 30))!
-        let workEnd        = calendar.date(from: DateComponents(hour: 18, minute: 0))!
-        let personalStart  = calendar.date(from: DateComponents(hour: 18, minute: 0))!
-        let personalEnd    = calendar.date(from: DateComponents(hour: 23, minute: 0))!
-        let weekendStart   = calendar.date(from: DateComponents(hour: 9,  minute: 0))!
-        let weekendEnd     = calendar.date(from: DateComponents(hour: 18, minute: 0))!
+        let workStart     = calendar.date(from: DateComponents(hour: 8,  minute: 30))!
+        let workEnd       = calendar.date(from: DateComponents(hour: 18, minute: 0))!
+        let personalStart = calendar.date(from: DateComponents(hour: 18, minute: 0))!
+        let personalEnd   = calendar.date(from: DateComponents(hour: 8, minute: 30))!
 
         context.insert(TimeBlockRule(
             name: "Work Hours",
             startTime: workStart,
             endTime: workEnd,
             linkedSetID: workSet.id,
-            daysOfWeek: [2, 3, 4, 5, 6],   // Mon–Fri
+            daysOfWeek: [],
             trackingMode: .on
         ))
         context.insert(TimeBlockRule(
@@ -146,15 +123,7 @@ struct CadenceApp: App {
             startTime: personalStart,
             endTime: personalEnd,
             linkedSetID: personalSet.id,
-            daysOfWeek: [],                  // Every day
-            trackingMode: .on
-        ))
-        context.insert(TimeBlockRule(
-            name: "Weekend Day",
-            startTime: weekendStart,
-            endTime: weekendEnd,
-            linkedSetID: weekendSet.id,
-            daysOfWeek: [1, 7],              // Sun & Sat
+            daysOfWeek: [],
             trackingMode: .on
         ))
 

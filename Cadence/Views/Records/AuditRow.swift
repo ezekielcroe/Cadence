@@ -1,11 +1,8 @@
-// AuditRow.swift
-// Cadence
-//
-
 import SwiftUI
 
 struct AuditRow: View {
     let block: TimeBlock
+    let remarks: [Remark]     // pre-fetched by RecordsView, filtered to this block
     let isSelected: Bool
     let isSelectionMode: Bool
     let isEditable: Bool
@@ -19,22 +16,27 @@ struct AuditRow: View {
         return "\(start) → now"
     }
 
+    private var firstRemark: Remark? {
+        remarks.sorted { $0.timestamp < $1.timestamp }.first
+    }
+
+    private var allTags: [String] {
+        Array(Set(remarks.flatMap { $0.tags })).sorted()
+    }
+
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 12) {
-                // Selection checkbox
                 if isSelectionMode {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(isSelected ? .blue : .secondary)
                         .font(.title3)
                 }
 
-                // Activity color bar
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(hex: block.activityColor))
                     .frame(width: 4, height: 44)
 
-                // Content
                 VStack(alignment: .leading, spacing: 4) {
                     Text(block.activityName)
                         .font(.headline)
@@ -44,7 +46,6 @@ struct AuditRow: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    // Pause summary (only shown if pauses occurred)
                     if block.pauseCount > 0 {
                         Label(
                             "\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") · \(block.totalPauseDuration.formattedDuration) total",
@@ -54,21 +55,49 @@ struct AuditRow: View {
                         .foregroundStyle(.secondary)
                     }
 
-                    if !block.remarks.isEmpty {
-                        Text(block.remarks)
+                    // First remark preview
+                    if let remark = firstRemark {
+                        Text(remark.preview)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                    }
+
+                    // Tag chips (max 3 visible)
+                    if !allTags.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(allTags.prefix(3), id: \.self) { tag in
+                                Text("#\(tag)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.blue)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.08))
+                                    .cornerRadius(4)
+                            }
+                            if allTags.count > 3 {
+                                Text("+\(allTags.count - 3)")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
 
                 Spacer()
 
-                // Duration
-                Text(block.duration.formattedDuration)
-                    .font(.subheadline)
-                    .monospacedDigit()
-                    .fontWeight(.medium)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(block.duration.formattedDuration)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .fontWeight(.medium)
+
+                    if remarks.count > 0 {
+                        Label("\(remarks.count)", systemImage: "note.text")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
             .padding(.vertical, 8)
             .contentShape(Rectangle())
@@ -77,8 +106,7 @@ struct AuditRow: View {
     }
 }
 
-// MARK: - Badges (kept for potential future use)
-
+// MARK: - Kept for potential future use
 struct GapBadge: View {
     var body: some View {
         HStack(spacing: 4) {
@@ -93,29 +121,5 @@ struct GapBadge: View {
         .padding(.vertical, 2)
         .background(Color.orange.opacity(0.15))
         .cornerRadius(4)
-    }
-}
-
-#Preview {
-    let block = TimeBlock(
-        activityID: UUID(),
-        activityName: "Deep Work",
-        activityColor: "#4CAF50",
-        activitySetID: UUID(),
-        startTime: Date().addingTimeInterval(-3600)
-    )
-    block.endTime = Date()
-    block.pauseCount = 2
-    block.totalPauseDuration = 480
-    block.remarks = "[10:22] Finished the auth PR"
-
-    return List {
-        AuditRow(
-            block: block,
-            isSelected: false,
-            isSelectionMode: false,
-            isEditable: true,
-            onTap: {}
-        )
     }
 }
