@@ -59,6 +59,19 @@ struct SettingsView: View {
                 } header: {
                     Text("General")
                 }
+                
+                // MARK: - Journal
+                Section {
+                    NavigationLink {
+                        JournalSettingsView()
+                    } label: {
+                        Label("Journal & Reflection", systemImage: "sun.horizon")
+                    }
+                } header: {
+                    Text("Journal")
+                } footer: {
+                    Text("Configure daily intention and reflection reminders.")
+                }
 
                 // MARK: - Tracking Behavior
                 Section {

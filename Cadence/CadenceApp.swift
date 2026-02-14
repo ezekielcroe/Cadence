@@ -26,6 +26,7 @@ struct CadenceApp: App {
             
             setupDefaultData()
             requestNotificationPermissions()
+            JournalNotificationManager.shared.rescheduleAll()
             
         } catch {
             fatalError("Could not initialize ModelContainer: \(error)")

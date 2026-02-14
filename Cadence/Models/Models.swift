@@ -109,11 +109,19 @@ final class DayNote {
     var intention:  String
     var reflection: String
 
+    // Tracks the actual wall-clock time each field was last written.
+    // Optional so older records (and empty fields) naturally carry nil.
+    var intentionUpdatedAt:  Date?
+    var reflectionUpdatedAt: Date?
+
     init(date: Date, intention: String = "", reflection: String = "") {
         self.id         = UUID()
         self.date       = Calendar.current.startOfDay(for: date)
         self.intention  = intention
         self.reflection = reflection
+        // Stamp creation time only when content is provided at init
+        self.intentionUpdatedAt  = intention.isEmpty  ? nil : Date()
+        self.reflectionUpdatedAt = reflection.isEmpty ? nil : Date()
     }
 
     static func normalizedDate(_ date: Date) -> Date {

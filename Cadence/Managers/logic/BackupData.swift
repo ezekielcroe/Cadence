@@ -49,7 +49,6 @@ struct TimeBlockDTO: Codable {
     let stopState: String
 }
 
-// NEW
 struct RemarkDTO: Codable {
     let id: UUID
     let timeBlockID: UUID
@@ -58,12 +57,13 @@ struct RemarkDTO: Codable {
     let tags: [String]
 }
 
-// NEW
 struct DayNoteDTO: Codable {
-    let id: UUID
-    let date: Date
-    let intention: String
-    let reflection: String
+    let id:                  UUID
+    let date:                Date
+    let intention:           String
+    let reflection:          String
+    let intentionUpdatedAt:  Date?   // nil for older backups — decodes safely
+    let reflectionUpdatedAt: Date?   // nil for older backups — decodes safely
 }
 
 // MARK: - Manager Class
@@ -119,10 +119,22 @@ class DataArchiveManager {
         if let cutoff = date {
             noteDTOs = allNotes
                 .filter { $0.date < cutoff }
-                .map { n in DayNoteDTO(id: n.id, date: n.date, intention: n.intention, reflection: n.reflection) }
+                .map { n in
+                    DayNoteDTO(
+                        id: n.id, date: n.date,
+                        intention: n.intention, reflection: n.reflection,
+                        intentionUpdatedAt:  n.intentionUpdatedAt,
+                        reflectionUpdatedAt: n.reflectionUpdatedAt
+                    )
+                }
         } else {
             noteDTOs = allNotes.map { n in
-                DayNoteDTO(id: n.id, date: n.date, intention: n.intention, reflection: n.reflection)
+                DayNoteDTO(
+                    id: n.id, date: n.date,
+                    intention: n.intention, reflection: n.reflection,
+                    intentionUpdatedAt:  n.intentionUpdatedAt,
+                    reflectionUpdatedAt: n.reflectionUpdatedAt
+                )
             }
         }
 
@@ -223,7 +235,9 @@ class DataArchiveManager {
         let existingNoteIDs = try Set(modelContext.fetch(FetchDescriptor<DayNote>()).map { $0.id })
         for dto in backup.dayNotes where !existingNoteIDs.contains(dto.id) {
             let note = DayNote(date: dto.date, intention: dto.intention, reflection: dto.reflection)
-            note.id  = dto.id
+            note.id                  = dto.id
+            note.intentionUpdatedAt  = dto.intentionUpdatedAt
+            note.reflectionUpdatedAt = dto.reflectionUpdatedAt
             modelContext.insert(note)
         }
 

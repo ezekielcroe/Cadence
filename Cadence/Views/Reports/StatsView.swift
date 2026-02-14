@@ -384,8 +384,10 @@ struct ReflectionSheet: View {
 
         if let note = existingNote {
             note.reflection = trimmed
+            note.reflectionUpdatedAt = Date()      // stamp write time
         } else {
             let note = DayNote(date: Date(), reflection: trimmed)
+            // reflectionUpdatedAt is set inside DayNote.init when reflection is non-empty
             modelContext.insert(note)
         }
         try? modelContext.save()
@@ -460,3 +462,4 @@ struct TimelineChart: View {
         .cornerRadius(8)
     }
 }
+

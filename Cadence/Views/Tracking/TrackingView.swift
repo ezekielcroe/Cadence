@@ -226,8 +226,10 @@ struct IntentionSheet: View {
 
         if let note = existingNote {
             note.intention = trimmed
+            note.intentionUpdatedAt = Date()       // stamp write time
         } else {
             let note = DayNote(date: Date(), intention: trimmed)
+            // intentionUpdatedAt is set inside DayNote.init when intention is non-empty
             modelContext.insert(note)
         }
         try? modelContext.save()
