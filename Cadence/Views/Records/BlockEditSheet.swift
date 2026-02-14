@@ -357,6 +357,12 @@ struct BlockEditSheet: View {
         handleTimestampAdjustments(oldStart: oldStart, oldEnd: oldEnd,
                                    newStart: editedStartTime, newEnd: resolvedEndTime)
         try? modelContext.save()
+        
+        // NEW: Invalidate (cover both old and new dates in case user moved the block to a new day)
+        HistoryManager.shared.invalidateDate(oldStart, in: modelContext)
+        if !Calendar.current.isDate(oldStart, inSameDayAs: editedStartTime) {
+        HistoryManager.shared.invalidateDate(editedStartTime, in: modelContext)
+        }
         onSave()
         dismiss()
     }

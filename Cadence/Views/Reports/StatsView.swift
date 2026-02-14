@@ -4,117 +4,208 @@ import Charts
 
 struct StatsView: View {
     let manager: TimeTrackingManager
-
     @Environment(\.modelContext) private var modelContext
-    @Query private var dayNotes: [DayNote]
-    @Query(sort: \Remark.timestamp, order: .forward) private var allRemarks: [Remark]
 
-    @State private var stats: DayStats?
-    @State private var timeBlocks: [TimeBlock] = []
+    // We fetch DayNotes and Remarks specifically for the *selected* date
+    // using a dynamic query approach is hard in a single view, so we fetch
+    // relevant items manually in loadData() for performance.
+    
+    @State private var selectedDate: Date = Date()
+    @State private var dayStats: DayStats?
+    @State private var dayBlocks: [TimeBlock] = []
+    @State private var dayRemarks: [Remark] = []
+    @State private var dayNote: DayNote?
+    
+    // UI State
     @State private var showingReflection = false
+    @State private var showingDatePicker = false
 
-    // MARK: - Today's data
-
-    private var todayNote: DayNote? {
-        dayNotes.first { Calendar.current.isDateInToday($0.date) }
+    private var isToday: Bool {
+        Calendar.current.isDateInToday(selectedDate)
     }
-
-    private var todayRemarks: [Remark] {
-        let todayBlockIDs = Set(timeBlocks.map { $0.id })
-        return allRemarks
-            .filter { todayBlockIDs.contains($0.timeBlockID) }
-            .sorted { $0.timestamp < $1.timestamp }
-    }
-
-    private var hasReflection: Bool {
-        !(todayNote?.reflection.isEmpty ?? true)
-    }
-
-    // MARK: - Body
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 24) {
+                    
+                    // MARK: - Date Navigator
+                    HStack {
+                        Button(action: { changeDate(by: -1) }) {
+                            Image(systemName: "chevron.left").padding(8)
+                        }
+                        
+                        Spacer()
+                        
+                        Button { showingDatePicker = true } label: {
+                            HStack {
+                                Image(systemName: "calendar")
+                                Text(selectedDate.formatted(date: .abbreviated, time: .omitted))
+                                    .monospacedDigit()
+                            }
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button(action: { changeDate(by: 1) }) {
+                            Image(systemName: "chevron.right").padding(8)
+                        }
+                        .disabled(isToday) // Future dates disabled
+                    }
+                    .padding(.horizontal)
 
-                    // ── Morning Intention ───────────────────────────────────
-                    if let note = todayNote, !note.intention.isEmpty {
+                    // MARK: - Content
+                    
+                    // 1. Intention
+                    if let note = dayNote, !note.intention.isEmpty {
                         IntentionCard(intention: note.intention)
                             .padding(.horizontal)
                     }
 
-                    // ── Stat Cards + Charts (original content) ───────────────
-                    if let stats = stats {
+                    // 2. Stats & Charts
+                    if let stats = dayStats {
                         statsContent(stats)
                     } else {
                         ContentUnavailableView(
-                            "No Data Yet",
+                            "No Data",
                             systemImage: "chart.bar",
-                            description: Text("Start tracking activities to see your stats")
+                            description: Text("No tracking data available for this date.")
                         )
+                        .padding(.top, 40)
                     }
 
-                    // ── Today's Remarks (chronological prose thread) ─────────
-                    if !todayRemarks.isEmpty {
-                        TodayRemarksCard(remarks: todayRemarks, blocks: timeBlocks)
+                    // 3. Remarks Timeline
+                    if !dayRemarks.isEmpty {
+                        TodayRemarksCard(remarks: dayRemarks, blocks: dayBlocks)
                             .padding(.horizontal)
                     }
 
-                    // ── Evening Reflection ──────────────────────────────────
-                    EveningReflectionCard(
-                        note: todayNote,
-                        onTap: { showingReflection = true }
-                    )
-                    .padding(.horizontal)
-                    .padding(.bottom, 24)
+                    // 4. Reflection
+                    // Only show for Today or if a reflection exists for past days
+                    if isToday || (dayNote?.reflection.isEmpty == false) {
+                        EveningReflectionCard(
+                            note: dayNote,
+                            onTap: { showingReflection = true }
+                        )
+                        .padding(.horizontal)
+                        .padding(.bottom, 24)
+                    }
                 }
                 .padding(.top)
             }
-            .navigationTitle("Today")
+            .navigationTitle(isToday ? "Today" : "History")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: loadStats) {
+                    Button { loadData() } label: {
                         Image(systemName: "arrow.clockwise")
                     }
                 }
             }
             .sheet(isPresented: $showingReflection) {
-                ReflectionSheet(existingNote: todayNote)
+                ReflectionSheet(existingNote: dayNote)
                     .presentationDetents([.medium])
             }
-            .onAppear { loadStats(); startAutoRefresh() }
+            .sheet(isPresented: $showingDatePicker) {
+                VStack {
+                    DatePicker("Select Date", selection: $selectedDate, in: ...Date(), displayedComponents: .date)
+                        .datePickerStyle(.graphical)
+                        .padding()
+                    Button("Done") { showingDatePicker = false }
+                        .buttonStyle(.borderedProminent)
+                }
+                .presentationDetents([.medium])
+            }
+            .onChange(of: selectedDate) { _, _ in loadData() }
+            .onAppear { loadData(); startAutoRefresh() }
         }
     }
 
-    // MARK: - Stats Content (original structure preserved)
+    // MARK: - Data Loading Logic
+
+    private func changeDate(by days: Int) {
+        if let newDate = Calendar.current.date(byAdding: .day, value: days, to: selectedDate) {
+            withAnimation { selectedDate = newDate }
+        }
+    }
+
+    private func loadData() {
+        let calendar = Calendar.current
+        let dayStart = calendar.startOfDay(for: selectedDate)
+        let dayEnd   = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+
+        // 1. Fetch Blocks (Fast query for single day)
+        // We need blocks for the TimelineChart even if we have cached stats
+        let blockDesc = FetchDescriptor<TimeBlock>(
+            predicate: #Predicate { $0.startTime >= dayStart && $0.startTime < dayEnd },
+            sortBy: [SortDescriptor(\.startTime)]
+        )
+        dayBlocks = (try? modelContext.fetch(blockDesc)) ?? []
+        
+        // 2. Fetch Remarks (Manual filter optimization)
+        // Only fetch remarks linked to these blocks
+        let blockIDs = Set(dayBlocks.map { $0.id })
+        let remarkDesc = FetchDescriptor<Remark>(sortBy: [SortDescriptor(\.timestamp)])
+        if let all = try? modelContext.fetch(remarkDesc) {
+            dayRemarks = all.filter { blockIDs.contains($0.timeBlockID) }
+        } else {
+            dayRemarks = []
+        }
+
+        // 3. Fetch Note
+        let noteDesc = FetchDescriptor<DayNote>(
+            predicate: #Predicate { $0.date == dayStart }
+        )
+        dayNote = (try? modelContext.fetch(noteDesc))?.first
+
+        // 4. Determine Stats Source
+        if isToday {
+            // LIVE Mode: Calculate on the fly
+            dayStats = manager.getTodaysStats()
+        } else {
+            // HISTORY Mode: Use cached summary
+            if let summary = HistoryManager.shared.getOrGenerateSummary(for: selectedDate, in: modelContext) {
+                dayStats = summary.asDayStats
+                // Refresh note from summary if needed (though we fetched fresh above)
+            } else {
+                dayStats = nil
+            }
+        }
+    }
+
+    private func startAutoRefresh() {
+        // Only auto-refresh if we are looking at Today
+        Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
+            if isToday { loadData() }
+        }
+    }
+    
+    // MARK: - Subviews (Reusing existing logic)
 
     @ViewBuilder
     private func statsContent(_ stats: DayStats) -> some View {
+        // Total & Count
         HStack(spacing: 12) {
-            StatCard(title: "Total Time",  value: stats.totalDuration.formattedDuration,
-                     icon: "clock.fill",   color: .blue)
-            StatCard(title: "Activities",  value: "\(stats.blockCount)",
-                     icon: "list.bullet",  color: .green)
+            StatCard(title: "Total Time",  value: stats.totalDuration.formattedDuration, icon: "clock.fill",   color: .blue)
+            StatCard(title: "Activities",  value: "\(stats.blockCount)",                 icon: "list.bullet",  color: .green)
         }
         .padding(.horizontal)
 
+        // Switches & Avg
         HStack(spacing: 12) {
-            StatCard(title: "Switches",    value: "\(stats.totalSwitches)",
-                     icon: "arrow.triangle.2.circlepath", color: .orange)
+            StatCard(title: "Switches",    value: "\(stats.totalSwitches)", icon: "arrow.triangle.2.circlepath", color: .orange)
             StatCard(title: "Avg Duration",
-                     value: stats.blockCount > 0
-                        ? (stats.totalDuration / Double(stats.blockCount)).formattedDuration
-                        : "0m",
+                     value: stats.blockCount > 0 ? (stats.totalDuration / Double(stats.blockCount)).formattedDuration : "0m",
                      icon: "timer",        color: .purple)
         }
         .padding(.horizontal)
 
+        // Breakdown Chart
         if !stats.sortedActivities.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Activity Breakdown")
-                    .font(.headline)
-                    .padding(.horizontal)
-
+                Text("Activity Breakdown").font(.headline).padding(.horizontal)
                 Chart {
                     ForEach(stats.sortedActivities, id: \.name) { activity in
                         BarMark(
@@ -124,12 +215,11 @@ struct StatsView: View {
                         .foregroundStyle(getActivityColor(activity.name))
                         .annotation(position: .trailing) {
                             Text(activity.duration.formattedDuration)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
-                .frame(height: CGFloat(stats.sortedActivities.count) * 50)
+                .frame(height: CGFloat(max(3, stats.sortedActivities.count) * 50))
                 .chartXAxis { AxisMarks(position: .bottom) }
                 .padding(.horizontal)
             }
@@ -139,13 +229,11 @@ struct StatsView: View {
             .padding(.horizontal)
         }
 
-        if !timeBlocks.isEmpty {
+        // Timeline Chart (Requires raw blocks)
+        if !dayBlocks.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Timeline")
-                    .font(.headline)
-                    .padding(.horizontal)
-
-                TimelineChart(blocks: timeBlocks)
+                Text("Timeline").font(.headline).padding(.horizontal)
+                TimelineChart(blocks: dayBlocks)
                     .frame(height: 60)
                     .padding(.horizontal)
             }
@@ -155,18 +243,14 @@ struct StatsView: View {
             .padding(.horizontal)
         }
 
+        // Detailed List
         VStack(alignment: .leading, spacing: 12) {
-            Text("Activity Details")
-                .font(.headline)
-                .padding(.horizontal)
-
+            Text("Activity Details").font(.headline).padding(.horizontal)
             ForEach(stats.sortedActivities, id: \.name) { activity in
                 ActivityDetailRow(
                     name:       activity.name,
                     duration:   activity.duration,
-                    percentage: stats.totalDuration > 0
-                        ? (activity.duration / stats.totalDuration) * 100
-                        : 0,
+                    percentage: stats.totalDuration > 0 ? (activity.duration / stats.totalDuration) * 100 : 0,
                     color:      getActivityColor(activity.name)
                 )
             }
@@ -177,23 +261,12 @@ struct StatsView: View {
         .padding(.horizontal)
     }
 
-    // MARK: - Helpers
-
-    private func loadStats() {
-        stats      = manager.getTodaysStats()
-        timeBlocks = manager.getTodaysTimeBlocks()
-    }
-
-    private func startAutoRefresh() {
-        Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
-            loadStats()
-        }
-    }
-
     private func getActivityColor(_ name: String) -> Color {
-        if let block = timeBlocks.first(where: { $0.activityName == name }) {
+        // Optimization: Try to find color in today's blocks first
+        if let block = dayBlocks.first(where: { $0.activityName == name }) {
             return Color(hex: block.activityColor)
         }
+        // Fallback: If not in blocks (rare case for cached stats vs live blocks mismatch), return gray
         return .gray
     }
 }
