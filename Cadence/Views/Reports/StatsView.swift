@@ -440,26 +440,99 @@ struct ActivityDetailRow: View {
 struct TimelineChart: View {
     let blocks: [TimeBlock]
 
-    private var startOfDay: Date { Calendar.current.startOfDay(for: Date()) }
-    private var endOfDay: Date   { Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)! }
+    // MARK: - Derived range
+
+    /// The left edge of the chart. For a normal day this is startOfDay;
+    /// for a day that starts with an overnight block from the night before
+    /// we still anchor to startOfDay so the chart always begins at 00:00.
+    private var chartStart: Date {
+        Calendar.current.startOfDay(for: blocks.first?.startTime ?? Date())
+    }
+
+    /// The right edge of the chart: whichever is latest between calendar
+    /// midnight (endOfDay) and the actual end of the last block.
+    /// Capped at the current moment so we don't draw future empty space.
+    private var chartEnd: Date {
+        let cal        = Calendar.current
+        let endOfDay   = cal.date(byAdding: .day, value: 1, to: chartStart)!
+        let latestEnd  = blocks.compactMap { $0.endTime }.max() ?? Date()
+        return min(max(endOfDay, latestEnd), Date() + 60) // +60s so "now" never clips
+    }
+
+    private var totalSpan: TimeInterval {
+        max(chartEnd.timeIntervalSince(chartStart), 1)  // guard against zero-division
+    }
+
+    /// True when the chart range crosses at least one calendar midnight
+    /// (i.e. any block ends after the calendar day of chartStart).
+    private var spansMultipleDays: Bool {
+        let endOfDay = Calendar.current.date(
+            byAdding: .day, value: 1, to: chartStart
+        )!
+        return blocks.contains {
+            ($0.endTime ?? Date()) > endOfDay
+        }
+    }
+
+    // MARK: - Body
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Rectangle().fill(Color(.systemGray5))
-                ForEach(blocks.filter { $0.endTime != nil }) { block in
-                    let start       = block.startTime
-                    let end         = block.endTime ?? Date()
-                    let startOffset = start.timeIntervalSince(startOfDay) / 86400
-                    let duration    = end.timeIntervalSince(start) / 86400
+                // Background track
+                Rectangle()
+                    .fill(Color(.systemGray5))
+
+                // Block bars
+                ForEach(blocks) { block in
+                    let start    = block.startTime
+                    let end      = block.endTime ?? Date()
+                    let xOffset  = offset(for: start,  width: geometry.size.width)
+                    let barWidth = width(from: start, to: end, totalWidth: geometry.size.width)
+
                     Rectangle()
                         .fill(Color(hex: block.activityColor))
-                        .frame(width: geometry.size.width * duration)
-                        .offset(x: geometry.size.width * startOffset)
+                        .frame(width: max(barWidth, 2))   // min 2pt so tiny blocks stay visible
+                        .offset(x: xOffset)
+                }
+
+                // Midnight marker — only when the range spans multiple days
+                if spansMultipleDays {
+                    let midnight   = Calendar.current.date(
+                        byAdding: .day, value: 1, to: chartStart
+                    )!
+                    let markerX = offset(for: midnight, width: geometry.size.width)
+
+                    Rectangle()
+                        .fill(Color(.systemBackground).opacity(0.6))
+                        .frame(width: 1.5)
+                        .offset(x: markerX)
                 }
             }
         }
         .cornerRadius(8)
     }
+
+    // MARK: - Helpers
+
+    private func offset(for date: Date, width: CGFloat) -> CGFloat {
+        let ratio = date.timeIntervalSince(chartStart) / totalSpan
+        return width * CGFloat(ratio.clamped(to: 0...1))
+    }
+
+    private func width(from start: Date, to end: Date, totalWidth: CGFloat) -> CGFloat {
+        let duration = end.timeIntervalSince(start)
+        let ratio    = duration / totalSpan
+        // Clamp so a block that ends beyond chartEnd doesn't overflow the frame
+        let clampedRatio = min(ratio, 1.0 - start.timeIntervalSince(chartStart) / totalSpan)
+        return totalWidth * CGFloat(max(clampedRatio, 0))
+    }
 }
 
+// MARK: - Comparable clamping helper (local to this file)
+
+private extension Comparable {
+    func clamped(to range: ClosedRange<Self>) -> Self {
+        min(max(self, range.lowerBound), range.upperBound)
+    }
+}

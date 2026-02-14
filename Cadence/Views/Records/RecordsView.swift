@@ -5,57 +5,42 @@ struct RecordsView: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: \TimeBlock.startTime, order: .reverse) private var allTimeBlocks: [TimeBlock]
-    @Query(sort: \Remark.timestamp, order: .forward) private var allRemarks: [Remark]
+    @Query(sort: \Remark.timestamp,    order: .forward)  private var allRemarks:    [Remark]
 
     // MARK: - Filter & Search State
-    @State private var searchText      = ""
+    @State private var searchText       = ""
     @State private var selectedActivity: String? = nil
-    @State private var selectedTag: String? = nil
-    @State private var showingFilters  = false
-    @State private var showArchived    = false
+    @State private var selectedTag: String?      = nil
+    @State private var showingFilters   = false
+    @State private var showArchived     = false
 
     // MARK: - Edit State
-    @State private var selectedBlock: TimeBlock?
-    @State private var conflictDetector: ConflictDetector?
-    @State private var gapToResolve: ComputedGap?
+    @State private var selectedBlock:     TimeBlock?
+    @State private var conflictDetector:  ConflictDetector?
+    @State private var gapToResolve:      ComputedGap?
 
     // MARK: - Multi-Select
-    @State private var isSelectionMode = false
+    @State private var isSelectionMode   = false
     @State private var selectedBlockIDs: Set<UUID> = []
 
-    // MARK: - Error State
-    @State private var showingMergeError    = false
-    @State private var mergeErrorMessage    = ""
-    @State private var showingAddBlock      = false
+    // MARK: - Error / Sheet State
+    @State private var showingMergeError = false
+    @State private var mergeErrorMessage = ""
+    @State private var showingAddBlock   = false
 
     private let editCutoffDays = 3
 
-    // MARK: - Remarks Dictionary
+    // MARK: - Derived: Remarks
 
-    /// All remarks keyed by their timeBlockID for O(1) lookup in rows
     private var remarksByBlockID: [UUID: [Remark]] {
         Dictionary(grouping: allRemarks) { $0.timeBlockID }
     }
 
-    /// All unique tags across all remarks (for the filter sheet)
     private var allTags: [String] {
         Array(Set(allRemarks.flatMap { $0.tags })).sorted()
     }
 
-    /// Block IDs that have at least one remark matching selectedTag or searchText
-    private var blockIDsMatchingRemarkSearch: Set<UUID>? {
-        let tagFilter  = selectedTag
-        let textFilter = searchText.lowercased()
-        guard tagFilter != nil || !textFilter.isEmpty else { return nil }
-
-        return Set(allRemarks.filter { remark in
-            let matchesTag  = tagFilter == nil || remark.tags.contains(tagFilter!)
-            let matchesText = textFilter.isEmpty || remark.text.localizedCaseInsensitiveContains(textFilter)
-            return matchesTag && matchesText
-        }.map { $0.timeBlockID })
-    }
-
-    // MARK: - Filtered Blocks
+    // MARK: - Derived: Filtered Blocks
 
     var filteredActivityBlocks: [TimeBlock] {
         var blocks = allTimeBlocks.filter { $0.activityID != nil }
@@ -69,13 +54,11 @@ struct RecordsView: View {
             blocks = blocks.filter { $0.activityName == selected }
         }
 
-        // Tag filter — show blocks whose remarks contain the tag
         if let tag = selectedTag {
             let matchingIDs = Set(allRemarks.filter { $0.tags.contains(tag) }.map { $0.timeBlockID })
             blocks = blocks.filter { matchingIDs.contains($0.id) }
         }
 
-        // Text search: activity name OR remark text
         if !searchText.isEmpty {
             let matchingRemarkBlockIDs = Set(
                 allRemarks
@@ -91,14 +74,11 @@ struct RecordsView: View {
         return blocks
     }
 
-    // MARK: - Grouped Timeline
+    // MARK: - Derived: Grouped Timeline
 
     var groupedTimeline: [String: [TimelineItem]] {
-        let calendar            = Calendar.current
-        let noActivityFilter    = selectedActivity == nil
-        let noTextFilter        = searchText.isEmpty
-        let noTagFilter         = selectedTag == nil
-        let canComputeGaps      = noActivityFilter && noTextFilter && noTagFilter
+        let calendar         = Calendar.current
+        let canComputeGaps   = selectedActivity == nil && searchText.isEmpty && selectedTag == nil
 
         let grouped = Dictionary(grouping: filteredActivityBlocks) { block -> String in
             if calendar.isDateInToday(block.startTime)     { return "Today" }
@@ -112,13 +92,21 @@ struct RecordsView: View {
             let sorted = dayBlocks.sorted { $0.startTime < $1.startTime }
             guard let first = sorted.first else { continue }
 
-            let dayStart = calendar.startOfDay(for: first.startTime)
-            let dayEnd: Date = calendar.isDateInToday(first.startTime)
-                ? Date()
-                : calendar.date(byAdding: .day, value: 1, to: dayStart)!
+            let dayStart       = calendar.startOfDay(for: first.startTime)
+            let calendarDayEnd = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+            let isToday        = calendar.isDateInToday(first.startTime)
+
+            // Extend end past midnight if any block ends later
+            let latestBlockEnd = sorted.compactMap { $0.endTime }.max() ?? calendarDayEnd
+            let rawDayEnd: Date = isToday
+                ? min(Date(), max(calendarDayEnd, latestBlockEnd))
+                : max(calendarDayEnd, latestBlockEnd)
+
+            // Advance gap start past overnight coverage from the previous day
+            let effectiveStart = overnightCoverageEnd(before: dayStart) ?? dayStart
 
             let gaps: [ComputedGap] = canComputeGaps
-                ? GapCalculator.computeGaps(in: sorted, from: dayStart, to: dayEnd)
+                ? GapCalculator.computeGaps(in: sorted, from: effectiveStart, to: rawDayEnd)
                 : []
 
             var items: [TimelineItem] = sorted.map { .activity($0) }
@@ -130,23 +118,28 @@ struct RecordsView: View {
         return result
     }
 
+    // MARK: - Derived: Section Keys (newest first)
+
     var sectionKeys: [String] {
-        groupedTimeline.keys.sorted { key1, key2 in
-            if key1 == "Today"     { return true  }
-            if key2 == "Today"     { return false }
-            if key1 == "Yesterday" { return true  }
-            if key2 == "Yesterday" { return false }
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM d, yyyy"
-            let d1 = formatter.date(from: key1) ?? .distantPast
-            let d2 = formatter.date(from: key2) ?? .distantPast
+        groupedTimeline.keys.sorted { lhs, rhs in
+            if lhs == "Today"     { return true  }
+            if rhs == "Today"     { return false }
+            if lhs == "Yesterday" { return true  }
+            if rhs == "Yesterday" { return false }
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MMM d, yyyy"
+            let d1 = fmt.date(from: lhs) ?? .distantPast
+            let d2 = fmt.date(from: rhs) ?? .distantPast
             return d1 > d2
         }
     }
 
+    // MARK: - Derived: Gap Summary (for the banner)
+
     var totalUnresolvedGapCount: Int {
         groupedTimeline.values.flatMap { $0 }
-            .filter { if case .gap = $0 { return true } else { return false } }.count
+            .filter { if case .gap = $0 { return true } else { return false } }
+            .count
     }
 
     var totalUnresolvedGapDuration: TimeInterval {
@@ -159,7 +152,9 @@ struct RecordsView: View {
     var firstUnresolvedGap: ComputedGap? {
         for key in sectionKeys {
             if let items = groupedTimeline[key] {
-                for item in items { if case .gap(let g) = item { return g } }
+                for item in items {
+                    if case .gap(let g) = item { return g }
+                }
             }
         }
         return nil
@@ -207,8 +202,8 @@ struct RecordsView: View {
 
                 if isSelectionMode {
                     BulkActionToolbar(
-                        count: selectedBlockIDs.count,
-                        onMerge: mergeSelected,
+                        count:    selectedBlockIDs.count,
+                        onMerge:  mergeSelected,
                         onDelete: deleteSelected,
                         onCancel: { isSelectionMode = false; selectedBlockIDs.removeAll() }
                     )
@@ -223,18 +218,16 @@ struct RecordsView: View {
                         selectedBlockIDs.removeAll()
                     }
                 }
-
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showingAddBlock = true } label: {
                         Image(systemName: "plus")
                     }
                 }
-
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Toggle("Show Archived", isOn: $showArchived)
                         Divider()
-                        Button("Filter…", action: { showingFilters = true })
+                        Button("Filter…") { showingFilters = true }
                     } label: {
                         Image(systemName: "line.3.horizontal.decrease.circle")
                             .symbolVariant(selectedActivity != nil || selectedTag != nil ? .fill : .none)
@@ -255,17 +248,17 @@ struct RecordsView: View {
             .sheet(isPresented: $showingFilters) {
                 FiltersView(
                     selectedActivity: $selectedActivity,
-                    selectedTag: $selectedTag,
-                    activities: Array(Set(filteredActivityBlocks.map { $0.activityName })).sorted(),
-                    allTags: allTags
+                    selectedTag:      $selectedTag,
+                    activities:       Array(Set(filteredActivityBlocks.map { $0.activityName })).sorted(),
+                    allTags:          allTags
                 )
                 .presentationDetents([.medium])
             }
             .sheet(isPresented: $showingAddBlock) {
                 AddBlockSheet(
-                    date: Date(),
+                    date:             Date(),
                     conflictDetector: conflictDetector ?? ConflictDetector(modelContext: modelContext),
-                    onSave: { try? modelContext.save() }
+                    onSave:           { try? modelContext.save() }
                 )
             }
             .alert("Cannot Merge", isPresented: $showingMergeError) {
@@ -277,11 +270,10 @@ struct RecordsView: View {
         .onAppear { conflictDetector = ConflictDetector(modelContext: modelContext) }
     }
 
-    // MARK: - Header
+    // MARK: - Header Section
 
     @ViewBuilder
     private var headerSection: some View {
-        // Active tag filter pill
         if let tag = selectedTag {
             HStack {
                 Image(systemName: "tag.fill").foregroundStyle(.blue).font(.caption)
@@ -298,7 +290,10 @@ struct RecordsView: View {
         }
 
         if totalUnresolvedGapCount > 0 {
-            GapActionBanner(gapCount: totalUnresolvedGapCount, totalDuration: totalUnresolvedGapDuration) {
+            GapActionBanner(
+                gapCount:      totalUnresolvedGapCount,
+                totalDuration: totalUnresolvedGapDuration
+            ) {
                 if let first = firstUnresolvedGap { gapToResolve = first }
             }
             .listRowInsets(EdgeInsets())
@@ -327,7 +322,6 @@ struct RecordsView: View {
     }
 
     private func deleteBlock(_ block: TimeBlock) {
-        // Also delete associated remarks
         let blockID = block.id
         for remark in allRemarks where remark.timeBlockID == blockID {
             modelContext.delete(remark)
@@ -376,6 +370,28 @@ struct RecordsView: View {
             mergeErrorMessage = error.localizedDescription
             showingMergeError = true
         }
+    }
+
+    // MARK: - Overnight Coverage Helper
+    //
+    // Returns the endTime of the latest block that started on the previous
+    // calendar day and ended after `dayStart` (i.e. an overnight block).
+    // Used to advance the gap-calculation start so morning hours already
+    // covered by sleep don't appear as untracked gaps.
+
+    private func overnightCoverageEnd(before dayStart: Date) -> Date? {
+        let calendar     = Calendar.current
+        let prevDayStart = calendar.date(byAdding: .day, value: -1, to: dayStart)!
+
+        let overnightEnds: [Date] = allTimeBlocks.compactMap { block in
+            guard block.activityID != nil            else { return nil }
+            guard block.startTime >= prevDayStart    else { return nil }
+            guard block.startTime <  dayStart        else { return nil }
+            guard let end = block.endTime            else { return nil }
+            guard end > dayStart                     else { return nil }
+            return end
+        }
+        return overnightEnds.max()
     }
 }
 
@@ -430,8 +446,7 @@ struct BulkActionToolbar: View {
                 Button("Cancel", action: onCancel)
                 Spacer()
                 Text("\(count) selected")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(.subheadline).fontWeight(.medium)
                 Spacer()
                 HStack(spacing: 20) {
                     Button(action: onMerge) {
@@ -457,14 +472,14 @@ struct BulkActionToolbar: View {
     }
 }
 
-// MARK: - Updated FiltersView (now includes tag filter)
+// MARK: - Filters View
 
 struct FiltersView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var selectedActivity: String?
-    @Binding var selectedTag: String?
+    @Binding var selectedTag:      String?
     let activities: [String]
-    let allTags: [String]
+    let allTags:    [String]
 
     var body: some View {
         NavigationStack {
@@ -484,8 +499,7 @@ struct FiltersView: View {
                         Picker("Filter by Tag", selection: $selectedTag) {
                             Text("All Tags").tag(nil as String?)
                             ForEach(allTags, id: \.self) { tag in
-                                Label("#\(tag)", systemImage: "tag")
-                                    .tag(tag as String?)
+                                Label("#\(tag)", systemImage: "tag").tag(tag as String?)
                             }
                         }
                         .pickerStyle(.inline)

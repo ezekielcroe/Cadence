@@ -1,7 +1,12 @@
-//
-//  AddBlockSheet.swift
-//  Cadence
-//
+// ============================================================
+// FILE: Cadence/Views/Records/AddBlockSheet.swift
+
+// Change: Added `spansNextDay` Bool state and a "Spans midnight" toggle.
+// When toggled on, the end time is interpreted as being on the next calendar
+// day. The duration display and Save validation update accordingly.
+// No changes to the conflict detection or save logic — those already accept
+// cross-day ranges now that ConflictDetector.exceedsDayBoundary is removed.
+// ============================================================
 
 import SwiftUI
 import SwiftData
@@ -19,7 +24,8 @@ struct AddBlockSheet: View {
     @State private var selectedActivity: Activity?
     @State private var startTime:        Date
     @State private var endTime:          Date
-    @State private var remarkText        = ""   // saved as a Remark record on add
+    @State private var spansNextDay      = false    // "Spans midnight" toggle
+    @State private var remarkText        = ""
     @State private var validationResult: ValidationResult?
 
     init(date: Date, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
@@ -37,8 +43,21 @@ struct AddBlockSheet: View {
 
     // MARK: - Computed
 
+    /// The resolved end time. When spansNextDay is on, the end DatePicker's
+    /// hour/minute value is applied to the day after startTime.
+    private var resolvedEndTime: Date {
+        guard spansNextDay else { return endTime }
+        let cal         = Calendar.current
+        let nextDay     = cal.date(byAdding: .day, value: 1, to: startTime)!
+        let endComps    = cal.dateComponents([.hour, .minute], from: endTime)
+        return cal.date(bySettingHour: endComps.hour ?? 0,
+                        minute:        endComps.minute ?? 0,
+                        second:        0,
+                        of:            nextDay) ?? nextDay
+    }
+
     private var duration: TimeInterval {
-        endTime.timeIntervalSince(startTime)
+        resolvedEndTime.timeIntervalSince(startTime)
     }
 
     private var canSave: Bool {
@@ -88,14 +107,29 @@ struct AddBlockSheet: View {
                 // MARK: Time
                 Section("Time") {
                     DatePicker("Start", selection: $startTime, displayedComponents: .hourAndMinute)
-                    DatePicker("End",   selection: $endTime,   displayedComponents: .hourAndMinute)
+                        .onChange(of: startTime) { _, _ in validate() }
+
+                    Toggle(isOn: $spansNextDay) {
+                        Label("Spans midnight", systemImage: "moon.fill")
+                    }
+                    .tint(.indigo)
+                    .onChange(of: spansNextDay) { _, _ in validate() }
+
+                    DatePicker("End", selection: $endTime, displayedComponents: .hourAndMinute)
+                        .onChange(of: endTime) { _, _ in validate() }
 
                     HStack {
                         Text("Duration")
                         Spacer()
-                        Text(duration.formattedDuration)
-                            .foregroundStyle(duration > 0 ? Color.primary : Color.red)
-                            .monospacedDigit()
+                        if spansNextDay {
+                            Text("next day · \(duration > 0 ? duration.formattedDuration : "—")")
+                                .foregroundStyle(duration > 0 ? Color.secondary : Color.red)
+                                .monospacedDigit()
+                        } else {
+                            Text(duration > 0 ? duration.formattedDuration : "—")
+                                .foregroundStyle(duration > 0 ? Color.primary : Color.red)
+                                .monospacedDigit()
+                        }
                     }
                 }
 
@@ -115,13 +149,12 @@ struct AddBlockSheet: View {
 
                 // MARK: Remark
                 Section {
-                    TextField("What were you doing? (#tags supported)", text: $remarkText, axis: .vertical)
-                        .lineLimit(3...6)
+                    TextField("Optional remark… (#tags supported)", text: $remarkText, axis: .vertical)
+                        .lineLimit(2...5)
                 } header: {
-                    Text("Remark (Optional)")
+                    Text("Remark")
                 } footer: {
-                    Text("Saved as a remark on this block. Use #tags to make it searchable.")
-                        .opacity(remarkText.isEmpty ? 1 : 0)
+                    Text("Saved as a remark attached to this block.")
                 }
             }
             .navigationTitle("Add Block")
@@ -131,51 +164,54 @@ struct AddBlockSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { addBlock() }
+                    Button("Add") { save() }
                         .fontWeight(.semibold)
                         .disabled(!canSave)
                 }
             }
-            .onChange(of: startTime) { _, _ in validate() }
-            .onChange(of: endTime)   { _, _ in validate() }
             .onAppear { validate() }
         }
         .presentationDetents([.large])
     }
 
-    // MARK: - Validation
+    // MARK: - Actions
 
     private func validate() {
-        let tempBlock = TimeBlock(
-            activityID:    selectedActivity?.id,
-            activityName:  selectedActivity?.name  ?? "",
-            activityColor: selectedActivity?.color ?? "#999999",
-            activitySetID: selectedActivity?.sets.first(where: { $0.isActive })?.id,
-            startTime:     startTime
-        )
-        tempBlock.endTime = endTime
-
+        guard let activity = selectedActivity else {
+            validationResult = nil
+            return
+        }
+        _ = activity  // suppress unused warning; activity selection gates canSave
         validationResult = conflictDetector.validateEdit(
-            block:    tempBlock,
+            block: TimeBlock(
+                activityID: selectedActivity?.id,
+                activityName: selectedActivity?.name ?? "",
+                activityColor: selectedActivity?.color ?? "#000000",
+                activitySetID: nil,
+                startTime: startTime
+            ),
             newStart: startTime,
-            newEnd:   endTime
+            newEnd: resolvedEndTime
         )
     }
 
-    // MARK: - Save
-
-    private func addBlock() {
+    private func save() {
         guard let activity = selectedActivity else { return }
 
-        let newBlock       = TimeBlock(activity: activity, startTime: startTime)
-        newBlock.endTime   = endTime
-        newBlock.stopState = "stopped"
-        modelContext.insert(newBlock)
+        let block = TimeBlock(
+            activityID: activity.id,
+            activityName: activity.name,
+            activityColor: activity.color,
+            activitySetID: activity.sets.first(where: { $0.isActive })?.id,
+            startTime: startTime
+        )
+        block.endTime   = resolvedEndTime
+        block.stopState = "stopped"
+        modelContext.insert(block)
 
-        // Create a Remark record if the user typed something
         let trimmed = remarkText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            let remark = Remark(timeBlockID: newBlock.id, text: trimmed)
+            let remark = Remark(timeBlockID: block.id, text: trimmed)
             modelContext.insert(remark)
         }
 
@@ -184,4 +220,3 @@ struct AddBlockSheet: View {
         dismiss()
     }
 }
-

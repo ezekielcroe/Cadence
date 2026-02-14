@@ -32,6 +32,7 @@ struct BlockEditSheet: View {
     @State private var showingConflictConfirmation = false
     @State private var showingSplitSheet = false
     @State private var showingActivityPicker = false
+    @State private var spansNextDay: Bool
 
     // Remarks for this block only
     private var blockRemarks: [Remark] {
@@ -44,21 +45,39 @@ struct BlockEditSheet: View {
         self.block            = block
         self.conflictDetector = conflictDetector
         self.onSave           = onSave
-        _editedStartTime      = State(initialValue: block.startTime)
-        _editedEndTime        = State(initialValue: block.endTime ?? Date())
-        _editedActivityID     = State(initialValue: block.activityID)
+        _editedStartTime  = State(initialValue: block.startTime)
+        _editedEndTime    = State(initialValue: block.endTime ?? Date())
+        _editedActivityID = State(initialValue: block.activityID)
+
+        // Pre-set the toggle if this is already an overnight block
+        let cal         = Calendar.current
+        let existingEnd = block.endTime ?? block.startTime
+        _spansNextDay   = State(initialValue:
+            !cal.isDate(block.startTime, inSameDayAs: existingEnd)
+        )
     }
 
     // MARK: - Computed
 
     private var hasChanges: Bool {
-        editedStartTime  != block.startTime  ||
-        editedEndTime    != (block.endTime ?? Date()) ||
+        editedStartTime  != block.startTime     ||
+        resolvedEndTime  != (block.endTime ?? Date()) ||
         editedActivityID != block.activityID
+    }
+    
+    private var resolvedEndTime: Date {           // ADD — from patch Step 3
+        guard spansNextDay else { return editedEndTime }
+        let cal      = Calendar.current
+        let nextDay  = cal.date(byAdding: .day, value: 1, to: editedStartTime)!
+        let endComps = cal.dateComponents([.hour, .minute], from: editedEndTime)
+        return cal.date(bySettingHour: endComps.hour ?? 0,
+                        minute:        endComps.minute ?? 0,
+                        second:        0,
+                        of:            nextDay) ?? nextDay
     }
 
     private var selectedActivity: Activity? { activities.first { $0.id == editedActivityID } }
-    private var editedDuration: TimeInterval { editedEndTime.timeIntervalSince(editedStartTime) }
+    private var editedDuration: TimeInterval { resolvedEndTime.timeIntervalSince(editedStartTime) }
 
     private var canSave: Bool {
         guard hasChanges, let validation = validationResult else { return false }
@@ -209,31 +228,52 @@ struct BlockEditSheet: View {
         }
     }
 
-    private var timeEditors: some View {
-        Group {
+        @ViewBuilder
+        private var timeEditors: some View {
             HStack {
                 Text("Start")
                 Spacer()
-                DatePicker("", selection: $editedStartTime, in: allowedStartRange, displayedComponents: .hourAndMinute)
+                DatePicker("", selection: $editedStartTime,
+                           in: allowedStartRange,
+                           displayedComponents: .hourAndMinute)
                     .labelsHidden()
             }
+
+            Toggle(isOn: $spansNextDay) {
+                Label("Spans midnight", systemImage: "moon.fill")
+            }
+            .tint(.indigo)
+            .onChange(of: spansNextDay) { _, _ in validateChanges() }
+
             HStack {
                 Text("End")
                 Spacer()
                 if block.endTime != nil {
-                    DatePicker("", selection: $editedEndTime, in: allowedEndRange, displayedComponents: .hourAndMinute)
+                    DatePicker("", selection: $editedEndTime,
+                               in: allowedEndRange,
+                               displayedComponents: .hourAndMinute)
                         .labelsHidden()
                 } else {
                     Text("Ongoing").foregroundStyle(.green).fontWeight(.medium)
                 }
             }
+
             HStack {
                 Text("Duration")
                 Spacer()
-                Text(editedDuration.formattedDuration).foregroundStyle(.secondary).monospacedDigit()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(editedDuration > 0 ? editedDuration.formattedDuration : "—")
+                        .foregroundStyle(editedDuration > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
+                        .monospacedDigit()
+                    if spansNextDay {
+                        Text("next day")
+                            .font(.caption2)
+                            .foregroundStyle(.indigo)
+                    }
+                }
             }
         }
-    }
+
 
     private func conflictWarnings(_ validation: ValidationResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -260,7 +300,10 @@ struct BlockEditSheet: View {
     private var allowedEndRange: ClosedRange<Date> {
         let (_, next) = getAdjacentActivityBlocks(for: block)
         let earliest  = editedStartTime
-        let latest    = next?.startTime ?? Calendar.current.date(byAdding: .day, value: 1, to: block.startTime)!
+        // Allow up to 36 hours after start so overnight blocks (e.g. 11pm → 7am)
+        // can be set freely. If a following block exists, respect its start time.
+        let latest    = next?.startTime
+            ?? editedStartTime.addingTimeInterval(36 * 3600)
         return earliest...max(earliest, latest)
     }
 
@@ -283,7 +326,9 @@ struct BlockEditSheet: View {
 
     private func validateChanges() {
         validationResult = conflictDetector.validateEdit(
-            block: block, newStart: editedStartTime, newEnd: editedEndTime
+            block: block,
+            newStart: editedStartTime,
+            newEnd: resolvedEndTime
         )
     }
 
@@ -298,7 +343,7 @@ struct BlockEditSheet: View {
         let oldEnd   = block.endTime
 
         block.startTime = editedStartTime
-        if block.endTime != nil { block.endTime = editedEndTime }
+        if block.endTime != nil { block.endTime = resolvedEndTime }   // was: editedEndTime
 
         if let newID = editedActivityID,
            newID != block.activityID,
@@ -306,12 +351,11 @@ struct BlockEditSheet: View {
             block.activityID    = activity.id
             block.activityName  = activity.name
             block.activityColor = activity.color
-            // Store the set ID from the most relevant set
             block.activitySetID = activity.sets.first(where: { $0.isActive })?.id ?? activity.sets.first?.id
         }
 
         handleTimestampAdjustments(oldStart: oldStart, oldEnd: oldEnd,
-                                   newStart: editedStartTime, newEnd: editedEndTime)
+                                   newStart: editedStartTime, newEnd: resolvedEndTime)
         try? modelContext.save()
         onSave()
         dismiss()
@@ -335,13 +379,15 @@ struct BlockEditSheet: View {
     }
 
     private func getAdjacentActivityBlocks(for block: TimeBlock) -> (previous: TimeBlock?, next: TimeBlock?) {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: block.startTime)
-        let dayEnd   = calendar.date(byAdding: .day, value: 1, to: dayStart)!
+        let calendar  = Calendar.current
+        let dayStart  = calendar.startOfDay(for: block.startTime)
+        // Search a 48-hour window so we find blocks on the following day that
+        // an overnight block might need to stay clear of.
+        let searchEnd = calendar.date(byAdding: .day, value: 2, to: dayStart)!
 
         let descriptor = FetchDescriptor<TimeBlock>(
             predicate: #Predicate { b in
-                b.startTime >= dayStart && b.startTime < dayEnd && b.activityID != nil
+                b.startTime >= dayStart && b.startTime < searchEnd && b.activityID != nil
             },
             sortBy: [SortDescriptor(\.startTime, order: .forward)]
         )
@@ -379,7 +425,7 @@ struct ActivityPickerSheet: View {
 
     private var filteredGroupedActivities: [(set: ActivitySet, activities: [Activity])] {
         guard !searchText.isEmpty else { return groupedActivities }
-        return self.filteredGroupedActivities.compactMap { group in
+        return groupedActivities.compactMap { group in
             let filtered = group.activities.filter {
                 $0.name.localizedCaseInsensitiveContains(searchText)
             }
