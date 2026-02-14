@@ -144,14 +144,27 @@ enum GapCalculator {
             }
         }
 
-        // Trailing gap — after the last block, up to rangeEnd
-        // Only reported if rangeEnd is in the past (avoids flagging live time)
-        if let last = completed.last,
-           let lastEnd = last.endTime,
-           lastEnd < rangeEnd,
-           rangeEnd <= Date() {
-            let gap = ComputedGap(start: lastEnd, end: rangeEnd)
-            if gap.duration >= minimumDuration { gaps.append(gap) }
+        // If an ongoing block has already started, the gap ends where it began —
+        // the ongoing block is covering time from that point forward.
+        // If there is no ongoing block, report a gap to rangeEnd only when the
+        // full range is in the past (avoids flagging unelapsed time as a gap).
+        let ongoingStart = blocks.first(where: { $0.endTime == nil })?.startTime
+
+        if let last = completed.last, let lastEnd = last.endTime {
+            if let ongoingStart, ongoingStart > lastEnd {
+                // Ongoing block is accounting for time from ongoingStart onward.
+                // The only real gap is the window between the last completed block
+                // and when the ongoing block started.
+                let gap = ComputedGap(start: lastEnd, end: ongoingStart)
+                if gap.duration >= minimumDuration { gaps.append(gap) }
+            } else if ongoingStart == nil, lastEnd < rangeEnd, rangeEnd <= Date() {
+                // No ongoing block — only flag a trailing gap if the entire range
+                // is behind us, so we don't report future time as unaccounted.
+                let gap = ComputedGap(start: lastEnd, end: rangeEnd)
+                if gap.duration >= minimumDuration { gaps.append(gap) }
+            }
+            // If ongoingStart <= lastEnd, the ongoing block started before or exactly
+            // when the last completed block ended — no trailing gap at all.
         }
 
         return gaps
