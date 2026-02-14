@@ -32,6 +32,7 @@ class TimeTrackingManager: ObservableObject {
     }
 
     private var timer: Timer?
+    private let historyManager = HistoryManager.shared
 
     // MARK: - Initialization
 
@@ -110,7 +111,7 @@ class TimeTrackingManager: ObservableObject {
         currentTimeBlock = newBlock
 
         clearBackgroundState()
-        saveContext()
+        saveAndInvalidate(date: now)
     }
 
     /// Pause the current activity in-place.
@@ -149,7 +150,7 @@ class TimeTrackingManager: ObservableObject {
         currentTimeBlock = nil
 
         clearBackgroundState()
-        saveContext()
+        saveAndInvalidate(date: now)
     }
 
     // MARK: - Pause Helpers
@@ -176,7 +177,7 @@ class TimeTrackingManager: ObservableObject {
         current.stopState = "stopped"
         currentTimeBlock = nil
 
-        saveContext()
+        saveAndInvalidate(date: cappedPauseEnd)
         notifyPauseTimeout()
     }
 
@@ -254,16 +255,22 @@ class TimeTrackingManager: ObservableObject {
         let elapsed = Date().timeIntervalSince(backgroundTime)
 
         if current.isPaused {
-            // Check pause timeout: did the pause exceed 10 min while backgrounded?
             let totalPauseElapsed = Date().timeIntervalSince(current.pauseStartTime ?? backgroundTime)
             if totalPauseElapsed > maxPauseDuration {
+                // autostopDueToPauseTimeout handles its own saveAndInvalidate
                 autostopDueToPauseTimeout(current: current)
             }
-            // If still within 10 min, resume normally — user comes back to paused state.
+            // If still within limit, resume normally — user comes back to paused state.
         } else if elapsed > maxBackgroundDuration {
             handleBackgroundTimeout(current: current, backgroundTime: backgroundTime)
+            // cappedEnd is the date the block actually ended — invalidate that day
+            let cappedEnd = backgroundTime.addingTimeInterval(maxBackgroundDuration)
+            saveAndInvalidate(date: cappedEnd)
+            checkAndApplyCurrentTimeBlockRule()
+            return
         }
 
+        // No block ended — persist any state changes (e.g. resumed from pause within limit)
         saveContext()
         checkAndApplyCurrentTimeBlockRule()
     }
@@ -290,20 +297,25 @@ class TimeTrackingManager: ObservableObject {
         currentTimeBlock = activeBlock
 
         // If backgrounded while active or paused, check timeouts
+        // AFTER
         if let backgroundTime = backgroundEnteredTime {
             if activeBlock.isPaused {
                 let totalPauseElapsed = Date().timeIntervalSince(activeBlock.pauseStartTime ?? backgroundTime)
                 if totalPauseElapsed > maxPauseDuration {
+                    // autostopDueToPauseTimeout handles its own saveAndInvalidate
                     autostopDueToPauseTimeout(current: activeBlock)
                 }
             } else {
                 let elapsed = Date().timeIntervalSince(backgroundTime)
                 if elapsed > maxBackgroundDuration {
                     handleBackgroundTimeout(current: activeBlock, backgroundTime: backgroundTime)
+                    let cappedEnd = backgroundTime.addingTimeInterval(maxBackgroundDuration)
+                    saveAndInvalidate(date: cappedEnd)
                 }
             }
             clearBackgroundState()
-            saveContext()
+            // No trailing saveContext() needed: each branch above handles its own persistence,
+            // and the no-timeout paths have no SwiftData mutations to commit.
         }
     }
 
@@ -449,5 +461,12 @@ class TimeTrackingManager: ObservableObject {
         } catch {
             print("[Cadence] Failed to save context: \(error)")
         }
+    }
+
+    /// Saves the context and forces HistoryManager to recalculate the summary
+    /// for the given date, so StatsView never serves stale cached numbers.
+    private func saveAndInvalidate(date: Date) {
+        saveContext()
+        historyManager.invalidateDate(date, in: modelContext)
     }
 }
