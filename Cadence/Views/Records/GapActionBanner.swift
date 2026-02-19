@@ -44,7 +44,58 @@ struct GapActionBanner: View {
     }
 }
 
-// MARK: - Bulk Action Toolbar
+// MARK: - Filters View
+// Used by RecordsView for filtering options
+struct FiltersView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var selectedActivity: String?
+    @Binding var selectedTag: String?
+
+    let activities: [String]
+    let allTags: [String]
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Activity") {
+                    Picker("Filter by Activity", selection: $selectedActivity) {
+                        Text("All Activities").tag(nil as String?)
+                        ForEach(activities, id: \.self) { activity in
+                            Text(activity).tag(activity as String?)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+                if !allTags.isEmpty {
+                    Section("Tag") {
+                        Picker("Filter by Tag", selection: $selectedTag) {
+                            Text("All Tags").tag(nil as String?)
+                            ForEach(allTags, id: \.self) { tag in
+                                Label("#\(tag)", systemImage: "tag").tag(tag as String?)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    }
+                }
+            }
+            .navigationTitle("Filters")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Clear All") {
+                        selectedActivity = nil
+                        selectedTag = nil
+                    }
+                    .disabled(selectedActivity == nil && selectedTag == nil)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Bulk Action Toolbar (unchanged)
 // Used by RecordsView for selection mode actions
 struct BulkActionToolbar: View {
     let count: Int
@@ -81,58 +132,6 @@ struct BulkActionToolbar: View {
             }
             .padding()
             .background(.regularMaterial)
-        }
-    }
-}
-
-// MARK: - Filters View
-// Used by RecordsView for filtering options
-struct FiltersView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Binding var selectedActivity: String?
-    @Binding var selectedTag: String?
-    
-    let activities: [String]
-    let allTags: [String]
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Activity") {
-                    Picker("Filter by Activity", selection: $selectedActivity) {
-                        Text("All Activities").tag(nil as String?)
-                        ForEach(activities, id: \.self) { activity in
-                            Text(activity).tag(activity as String?)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                }
-
-                if !allTags.isEmpty {
-                    Section("Tag") {
-                        Picker("Filter by Tag", selection: $selectedTag) {
-                            Text("All Tags").tag(nil as String?)
-                            ForEach(allTags, id: \.self) { tag in
-                                Label("#\(tag)", systemImage: "tag").tag(tag as String?)
-                            }
-                        }
-                        .pickerStyle(.inline)
-                    }
-                }
-            }
-            .navigationTitle("Filters")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Clear All") {
-                        selectedActivity = nil
-                        selectedTag = nil
-                    }
-                    .disabled(selectedActivity == nil && selectedTag == nil)
-                }
-            }
         }
     }
 }

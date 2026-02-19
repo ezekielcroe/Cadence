@@ -511,17 +511,6 @@ struct RemarkTimelineRow: View {
     }
 }
 
-struct TagChipRow: View {
-    let tags: [String]
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(tags, id: \.self) { tag in
-                Text("#\(tag)").font(.caption).foregroundStyle(.blue).padding(.horizontal, 8).padding(.vertical, 3).background(Color.blue.opacity(0.1)).cornerRadius(6)
-            }
-        }
-    }
-}
-
 struct TagPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     let allTags: [String]
