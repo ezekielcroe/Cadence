@@ -270,8 +270,6 @@ struct TimelineListView: View {
             }
         }
 
-        if isToday && !items.isEmpty { nowMarker }
-
         if items.isEmpty {
             HStack {
                 Spacer()
@@ -523,20 +521,6 @@ struct TimelineListView: View {
         .padding(.vertical, 3)
         .listRowSeparator(.hidden)
         .contentShape(Rectangle())
-    }
-
-    private var nowMarker: some View {
-        HStack(spacing: 0) {
-            Text("now")
-                .font(.caption2).fontWeight(.medium)
-                .foregroundStyle(.green.opacity(0.7))
-                .frame(width: 52, alignment: .trailing)
-            Circle().fill(.green.opacity(0.6)).frame(width: 5, height: 5).padding(.leading, 7)
-            Rectangle().fill(.green.opacity(0.12)).frame(height: 1)
-        }
-        .padding(.vertical, 4)
-        .listRowSeparator(.hidden)
-        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 12))
     }
 
     private func timeGutter(_ date: Date, muted: Bool = false) -> some View {
