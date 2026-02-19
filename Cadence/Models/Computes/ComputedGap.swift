@@ -13,14 +13,14 @@ import SwiftData
 /// A gap in the timeline — untracked time between two completed activity blocks.
 /// This is a pure value type derived from block timestamps; it is never persisted.
 struct ComputedGap: Identifiable {
-    let id: UUID
+    // FIX: Stable ID based on timestamps prevents SwiftUI from losing track of the row on refresh
+    var id: String { "\(start.timeIntervalSince1970)-\(end.timeIntervalSince1970)" }
     let start: Date
     let end: Date
 
     var duration: TimeInterval { end.timeIntervalSince(start) }
 
     init(start: Date, end: Date) {
-        self.id = UUID()
         self.start = start
         self.end = end
     }
@@ -261,7 +261,7 @@ enum TimelineItem: Identifiable {
     var id: String {
         switch self {
         case .activity(let b): return "activity-\(b.id.uuidString)"
-        case .gap(let g):      return "gap-\(g.id.uuidString)"
+        case .gap(let g):      return "gap-\(g.id)" // FIX: Uses string ID directly
         }
     }
 

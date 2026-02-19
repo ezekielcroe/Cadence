@@ -18,7 +18,7 @@ struct ContentView: View {
 
                     // Tab 1: Remarks — narrative prose thread + tag search
                     RemarksTimelineView()
-                        .tabItem { Label("Remarks", systemImage: "note.text") }
+                        .tabItem { Label("Search", systemImage: "magnifyingglass") }
                         .tag(1)
 
                     // Tab 2: Timer — center, primary action

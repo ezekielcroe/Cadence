@@ -24,21 +24,29 @@ struct AddBlockSheet: View {
     @State private var selectedActivity: Activity?
     @State private var startTime:        Date
     @State private var endTime:          Date
-    @State private var spansNextDay      = false    // "Spans midnight" toggle
+    @State private var spansNextDay      = false
     @State private var remarkText        = ""
     @State private var validationResult: ValidationResult?
 
-    init(date: Date, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
+    // FIX: Accept an optional prefilled gap to populate times immediately
+    init(date: Date, prefilledGap: ComputedGap? = nil, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
         self.date             = date
         self.conflictDetector = conflictDetector
         self.onSave           = onSave
 
-        let calendar   = Calendar.current
-        let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
-        let startOfHour = calendar.date(from: components) ?? Date()
+        if let gap = prefilledGap {
+            _startTime = State(initialValue: gap.start)
+            _endTime   = State(initialValue: gap.end)
+            let cal = Calendar.current
+            _spansNextDay = State(initialValue: !cal.isDate(gap.start, inSameDayAs: gap.end))
+        } else {
+            let calendar   = Calendar.current
+            let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
+            let startOfHour = calendar.date(from: components) ?? Date()
 
-        _startTime = State(initialValue: startOfHour)
-        _endTime   = State(initialValue: startOfHour.addingTimeInterval(3600))
+            _startTime = State(initialValue: startOfHour)
+            _endTime   = State(initialValue: startOfHour.addingTimeInterval(3600))
+        }
     }
 
     // MARK: - Computed

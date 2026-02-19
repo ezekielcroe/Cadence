@@ -25,6 +25,7 @@ struct RecordsView: View {
     @State private var currentMonth: Date = Date()
     @State private var showArchived = false
     @State private var showingAddBlock = false
+    @State private var prefilledGap: ComputedGap? = nil // FIX: Track intended gap fill
 
     // MARK: - Filter State
     @State private var searchText = ""
@@ -40,7 +41,7 @@ struct RecordsView: View {
     // MARK: - Gap Overview
     @State private var gapOverviewMode = false
 
-    // MARK: - Undo System (Fix #7)
+    // MARK: - Undo System
     @State private var undoStack: [UndoableAction] = []
     @State private var showingUndoBanner = false
     @State private var undoBannerTimer: Timer?
@@ -65,7 +66,6 @@ struct RecordsView: View {
         return (start, end)
     }
 
-    // MARK: - "Is viewing current month" check (Fix #4)
     private var isViewingCurrentMonth: Bool {
         let cal = Calendar.current
         return cal.isDate(currentMonth, equalTo: Date(), toGranularity: .month)
@@ -76,12 +76,12 @@ struct RecordsView: View {
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
 
-                    // 1. Month Navigator with "Today" button (Fix #4)
+                    // 1. Month Navigator
                     if searchText.isEmpty {
                         monthNavigator
                     }
 
-                    // 2. Persistent Filter Bar (Fix #8)
+                    // 2. Persistent Filter Bar
                     if searchText.isEmpty {
                         filterBar
                     }
@@ -100,28 +100,17 @@ struct RecordsView: View {
                             selectedTag: selectedTag,
                             showArchived: showArchived,
                             gapOverviewMode: gapOverviewMode,
-                            onDeleteBlock: { block in
-                                recordUndo(for: block)
+                            onDeleteBlock: { block in recordUndo(for: block) },
+                            onFillGap: { gap in
+                                prefilledGap = gap
+                                showingAddBlock = true
                             }
                         )
                         .id(currentMonth)
                     }
                 }
 
-                // 4. Bulk Action Toolbar
-                if isSelectionMode && searchText.isEmpty {
-                    BulkActionToolbar(
-                        count: selectedBlockIDs.count,
-                        onMerge: mergeSelected,
-                        onDelete: deleteSelected,
-                        onCancel: {
-                            isSelectionMode = false
-                            selectedBlockIDs.removeAll()
-                        }
-                    )
-                }
-
-                // 5. Undo Banner (Fix #7)
+                // 4. Undo Banner
                 if showingUndoBanner, let lastAction = undoStack.last {
                     undoBanner(action: lastAction)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -147,7 +136,6 @@ struct RecordsView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        // Gap Overview toggle (Fix #3)
                         Toggle(isOn: $gapOverviewMode) {
                             Label("Gap Overview", systemImage: "exclamationmark.triangle")
                         }
@@ -163,7 +151,7 @@ struct RecordsView: View {
                 }
             }
             .sheet(item: $selectedBlock) { block in
-                QuickEditSheet(
+                 QuickEditSheet(
                     block: block,
                     conflictDetector: conflictDetector ?? ConflictDetector(modelContext: modelContext),
                     onSave: { try? modelContext.save() }
@@ -172,9 +160,14 @@ struct RecordsView: View {
             .sheet(isPresented: $showingAddBlock) {
                 AddBlockSheet(
                     date: currentMonth,
+                    prefilledGap: prefilledGap,
                     conflictDetector: conflictDetector ?? ConflictDetector(modelContext: modelContext),
-                    onSave: { try? modelContext.save() }
+                    onSave: {
+                        try? modelContext.save()
+                        prefilledGap = nil
+                    }
                 )
+                .onDisappear { prefilledGap = nil } // Clear gap state when dismissed
             }
         }
         .onAppear {
@@ -182,8 +175,7 @@ struct RecordsView: View {
         }
     }
 
-    // MARK: - Month Navigator (Fix #4: Today button)
-
+    // MARK: - Month Navigator
     private var monthNavigator: some View {
         HStack {
             Button(action: { changeMonth(by: -1) }) {
@@ -194,14 +186,12 @@ struct RecordsView: View {
             Spacer()
 
             if isViewingCurrentMonth {
-                // Show the month title normally
                 Text(currentMonth.formatted(.dateTime.month(.wide).year()))
                     .font(.headline)
                     .monospacedDigit()
                     .id(currentMonth)
                     .transition(.push(from: .top))
             } else {
-                // Show "Today" jump button when viewing a different month
                 Button {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         currentMonth = Date()
@@ -240,58 +230,52 @@ struct RecordsView: View {
         .background(Material.regular)
     }
 
-    // MARK: - Persistent Filter Bar (Fix #8)
+    // MARK: - Persistent Filter Bar
 
     private var filterBar: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                // Activity filter chip
-                FilterChip(
-                    icon: "figure.run",
-                    label: selectedActivity ?? "Activity",
-                    isActive: selectedActivity != nil
-                ) {
-                    // Cycle through activities or clear
-                    if selectedActivity != nil {
-                        selectedActivity = nil
-                    } else {
-                        // Show inline picker — for simplicity, cycle to first
-                        // In production this would show a popover
-                    }
-                }
-                .contextMenu {
+                // Activity filter chip - Using Menu
+                Menu {
                     Button("All Activities") { selectedActivity = nil }
                     Divider()
                     ForEach(allActivityNames, id: \.self) { name in
                         Button(name) { selectedActivity = name }
                     }
+                } label: {
+                    FilterChipLabel(
+                        icon: "figure.run",
+                        label: selectedActivity ?? "Activity",
+                        isActive: selectedActivity != nil
+                    )
                 }
 
-                // Tag filter chip
+                // Tag filter chip - Using Menu
                 if !allTags.isEmpty {
-                    FilterChip(
-                        icon: "tag",
-                        label: selectedTag.map { "#\($0)" } ?? "Tags",
-                        isActive: selectedTag != nil
-                    ) {
-                        if selectedTag != nil { selectedTag = nil }
-                    }
-                    .contextMenu {
+                    Menu {
                         Button("All Tags") { selectedTag = nil }
                         Divider()
                         ForEach(allTags, id: \.self) { tag in
                             Button("#\(tag)") { selectedTag = tag }
                         }
+                    } label: {
+                        FilterChipLabel(
+                            icon: "tag",
+                            label: selectedTag.map { "#\($0)" } ?? "Tags",
+                            isActive: selectedTag != nil
+                        )
                     }
                 }
 
-                // Gap overview chip (Fix #3)
-                FilterChip(
-                    icon: "exclamationmark.triangle",
-                    label: "Gaps",
-                    isActive: gapOverviewMode
-                ) {
-                    gapOverviewMode.toggle()
+                // Gap overview chip - Direct toggle
+                Button {
+                    withAnimation { gapOverviewMode.toggle() }
+                } label: {
+                    FilterChipLabel(
+                        icon: "exclamationmark.triangle",
+                        label: "Gaps",
+                        isActive: gapOverviewMode
+                    )
                 }
 
                 // Clear all
@@ -315,7 +299,7 @@ struct RecordsView: View {
         .background(Color(.systemBackground))
     }
 
-    // MARK: - Undo Banner (Fix #7)
+    // MARK: - Undo Recording
 
     private func undoBanner(action: UndoableAction) -> some View {
         HStack(spacing: 12) {
@@ -350,10 +334,7 @@ struct RecordsView: View {
         .padding(.horizontal)
     }
 
-    // MARK: - Undo Recording
-
     private func recordUndo(for block: TimeBlock) {
-        // Snapshot the block data before deletion
         let snapshot = (
             activityID: block.activityID,
             activityName: block.activityName,
@@ -367,7 +348,6 @@ struct RecordsView: View {
             switchCount: block.switchCount
         )
 
-        // Snapshot remarks
         let blockRemarks = allRemarks.filter { $0.timeBlockID == block.id }
         let remarkSnapshots = blockRemarks.map { r in
             (text: r.text, timestamp: r.timestamp, tags: r.tags)
@@ -401,12 +381,10 @@ struct RecordsView: View {
 
         withAnimation {
             undoStack.append(action)
-            // Cap at 10 items
             if undoStack.count > 10 { undoStack.removeFirst() }
             showingUndoBanner = true
         }
 
-        // Auto-dismiss after 5 seconds
         undoBannerTimer?.invalidate()
         undoBannerTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { _ in
             withAnimation { showingUndoBanner = false }
@@ -460,34 +438,30 @@ struct RecordsView: View {
     }
 }
 
-// MARK: - Filter Chip Component (Fix #8)
+// MARK: - Filter Chip Component
 
-struct FilterChip: View {
+struct FilterChipLabel: View {
     let icon: String
     let label: String
     let isActive: Bool
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.caption)
-                Text(label)
-                    .font(.caption)
-                    .lineLimit(1)
-                if isActive {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.caption2)
-                }
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.caption)
+            Text(label)
+                .font(.caption)
+                .lineLimit(1)
+            if isActive {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.caption2)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(isActive ? Color.blue.opacity(0.15) : Color(.systemGray6))
-            .foregroundStyle(isActive ? .blue : .primary)
-            .cornerRadius(16)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(isActive ? Color.blue.opacity(0.15) : Color(.systemGray6))
+        .foregroundStyle(isActive ? .blue : .primary)
+        .cornerRadius(16)
     }
 }
 
