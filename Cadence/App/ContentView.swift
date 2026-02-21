@@ -13,12 +13,12 @@ struct ContentView: View {
 
                     // Tab 0: Records — raw timeline log
                     RecordsView()
-                        .tabItem { Label("Records", systemImage: "list.bullet.rectangle") }
+                        .tabItem { Label("Records", systemImage: "timeline.selection") }
                         .tag(0)
 
                     // Tab 1: Remarks — narrative prose thread + tag search
                     RemarksTimelineView()
-                        .tabItem { Label("Search", systemImage: "magnifyingglass") }
+                        .tabItem { Label("Remarks", systemImage: "book.pages") }
                         .tag(1)
 
                     // Tab 2: Timer — center, primary action

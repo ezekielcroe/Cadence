@@ -1,17 +1,16 @@
 // TimelineListView.swift
 // Cadence
 //
-// REDESIGN v2: Bullet journal day pages.
 //
 // Each day reads top-to-bottom as a single continuous page:
-//   ☀️ Intention
-//   8:30  ■ Activity          45m
+//   🌙 Reflection
+//   18:30  ■ Activity          45m
 //         › remark text       #tag
-//   9:15  ┊ 15m untracked    [fill]
 //   9:30  ■ Activity        2h 15m
 //         › remark            #tag
-//   → now
-//   🌙 Reflection
+//   9:15  ┊ 15m untracked    [fill]
+//   8:30  ■ Activity          45m
+//   ☀️ Intention
 //
 // Key changes from original:
 // - Reverse Chronological order (Latest first)
@@ -175,12 +174,6 @@ struct TimelineListView: View {
 
     var body: some View {
         List {
-            if isSelectionMode {
-                selectionBar
-                    .listRowInsets(EdgeInsets())
-                    .listRowSeparator(.hidden)
-            }
-
             ForEach(dayPages, id: \.date) { page in
                 Section {
                     if !collapsedDayDates.contains(page.date) {
@@ -305,13 +298,8 @@ struct TimelineListView: View {
                 colorBar(hex: block.activityColor)
 
                 VStack(alignment: .leading, spacing: 3) {
+                    // Title row
                     HStack(alignment: .firstTextBaseline) {
-                        if isSelectionMode {
-                            Image(systemName: selectedBlockIDs.contains(block.id) ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selectedBlockIDs.contains(block.id) ? AnyShapeStyle(.blue) : AnyShapeStyle(.tertiary))
-                                .font(.caption)
-                        }
-
                         Text(block.activityName)
                             .font(.subheadline).fontWeight(.medium)
                         
@@ -327,8 +315,26 @@ struct TimelineListView: View {
                     }
 
                     if isExpanded {
+                        // Expanded: truncated remark bullets
                         ForEach(blockRemarks) { remark in
                             remarkBullet(remark)
+                        }
+                    } else {
+                        // Collapsed: tags only
+                        let allTags = Array(Set(blockRemarks.flatMap { $0.tags })).sorted()
+                        if !allTags.isEmpty {
+                            HStack(spacing: 4) {
+                                ForEach(allTags.prefix(4), id: \.self) { tag in
+                                    Text("#\(tag)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.blue.opacity(0.6))
+                                }
+                                if allTags.count > 4 {
+                                    Text("+\(allTags.count - 4)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
                         }
                     }
                 }
@@ -353,8 +359,7 @@ struct TimelineListView: View {
                 }
             }
             .onLongPressGesture {
-                if !isSelectionMode { isSelectionMode = true; selectedBlockIDs.removeAll() }
-                selectedBlockIDs.insert(block.id)
+                selectedBlock = block
             }
 
             if showingRemarkField {
@@ -393,7 +398,8 @@ struct TimelineListView: View {
             Text(remark.displayText)
                 .font(.subheadline)
                 .foregroundStyle(.primary.opacity(0.85))
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
+                .truncationMode(.tail)
 
             Spacer(minLength: 0)
 
@@ -544,37 +550,6 @@ struct TimelineListView: View {
             .foregroundStyle(.secondary.opacity(0.2))
             .frame(width: 1)
             .padding(.horizontal, 9)
-    }
-
-    private var selectionBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chipButton("All Today", icon: "calendar") {
-                    selectedBlockIDs.formUnion(
-                        blocks.filter { Calendar.current.isDateInToday($0.startTime) }.map { $0.id }
-                    )
-                }
-                if let id = selectedBlockIDs.first, let b = blocks.first(where: { $0.id == id }) {
-                    chipButton("All \(b.activityName)", icon: "square.stack") {
-                        selectedBlockIDs.formUnion(
-                            blocks.filter { $0.activityName == b.activityName }.map { $0.id }
-                        )
-                    }
-                }
-                chipButton("Clear", icon: "xmark") { selectedBlockIDs.removeAll() }
-            }
-            .padding(.horizontal, 16).padding(.vertical, 8)
-        }
-        .background(Color.blue.opacity(0.04))
-    }
-
-    private func chipButton(_ label: String, icon: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(label, systemImage: icon)
-                .font(.caption).lineLimit(1)
-                .padding(.horizontal, 10).padding(.vertical, 6)
-                .background(Color(.systemGray6)).cornerRadius(14)
-        }.buttonStyle(.plain)
     }
 
     private var emptyState: some View {
