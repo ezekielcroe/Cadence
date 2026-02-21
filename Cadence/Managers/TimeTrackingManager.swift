@@ -6,6 +6,7 @@ import SwiftData
 import Combine
 import UIKit
 import UserNotifications
+import AudioToolbox
 
 // MARK: - TimeTrackingManager
 
@@ -96,10 +97,9 @@ class TimeTrackingManager: ObservableObject {
 
     /// Start tracking an activity.
     /// If the current block is paused, the pause is cleanly closed before switching.
-    func startActivity(_ activity: Activity) {
+    func startActivity(_ activity: Activity, targetDuration: TimeInterval? = nil) {
         let now = Date()
 
-        // If we're in a paused state, close the pause gracefully
         if let current = currentTimeBlock, current.isPaused {
             closePause(on: current, at: now)
         }
@@ -107,11 +107,63 @@ class TimeTrackingManager: ObservableObject {
         endCurrentActivityIfNeeded(at: now, state: "switched")
 
         let newBlock = TimeBlock(activity: activity, startTime: now)
+        newBlock.targetDuration = targetDuration
         modelContext.insert(newBlock)
         currentTimeBlock = newBlock
 
         clearBackgroundState()
         saveAndInvalidate(date: now)
+
+        if let target = targetDuration {
+            scheduleTargetAlarm(duration: target, activityName: activity.name)
+        } else {
+            cancelTargetAlarm()
+        }
+    }
+
+    func setTargetDuration(for block: TimeBlock, duration: TimeInterval?) {
+        block.targetDuration = duration
+        saveContext()
+        
+        if let target = duration {
+            // Calculate how much time is remaining right now
+            let remaining = max(0, target - block.duration)
+            if remaining > 0 {
+                scheduleTargetAlarm(duration: remaining, activityName: block.activityName)
+            }
+        } else {
+            cancelTargetAlarm()
+        }
+    }
+    
+    private func checkTargetDuration() {
+        guard let current = currentTimeBlock, let target = current.targetDuration else { return }
+        
+        if current.duration >= target {
+            current.targetDuration = nil
+            stopCurrentActivity()
+            
+            HapticManager.shared.notification(type: .success)
+            AudioServicesPlayAlertSound(SystemSoundID(1304))
+        }
+    }
+
+    private func scheduleTargetAlarm(duration: TimeInterval, activityName: String) {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ["targetAlarm"])
+
+        let content = UNMutableNotificationContent()
+        content.title = "Time is up!"
+        content.body = "Your session for \(activityName) has ended."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: duration, repeats: false)
+        let request = UNNotificationRequest(identifier: "targetAlarm", content: content, trigger: trigger)
+        center.add(request)
+    }
+
+    private func cancelTargetAlarm() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["targetAlarm"])
     }
 
     /// Pause the current activity in-place.
@@ -141,7 +193,6 @@ class TimeTrackingManager: ObservableObject {
     /// Any gap that results will appear as a computed gap in RecordsView.
     func stopCurrentActivity() {
         guard let current = currentTimeBlock else { return }
-
         let now = Date()
         if current.isPaused { closePause(on: current, at: now) }
 
@@ -151,6 +202,7 @@ class TimeTrackingManager: ObservableObject {
 
         clearBackgroundState()
         saveAndInvalidate(date: now)
+        cancelTargetAlarm()
     }
 
     // MARK: - Pause Helpers
@@ -197,6 +249,7 @@ class TimeTrackingManager: ObservableObject {
                 self.objectWillChange.send()
                 self.checkPauseTimeout()
                 self.checkAndApplyCurrentTimeBlockRule()
+                self.checkTargetDuration()
             }
         }
     }

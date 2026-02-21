@@ -282,7 +282,8 @@ final class TimeBlock {
     var activityID:     UUID?
     var activityName:   String
     var activityColor:  String
-    var activitySetID:  UUID?       // snapshot of the active set at recording time
+    var activitySetID:  UUID?
+    var targetDuration: TimeInterval?
 
     var startTime:  Date
     var endTime:    Date?
@@ -296,7 +297,7 @@ final class TimeBlock {
     var switchCount: Int
 
     init(activityID: UUID?, activityName: String, activityColor: String,
-         activitySetID: UUID?, startTime: Date) {
+         activitySetID: UUID?, startTime: Date, targetDuration: TimeInterval? = nil) {
         self.id                 = UUID()
         self.activityID         = activityID
         self.activityName       = activityName
@@ -310,6 +311,7 @@ final class TimeBlock {
         self.totalPauseDuration = 0
         self.stopState          = "ongoing"
         self.switchCount        = 0
+        self.targetDuration = targetDuration
     }
 
     // Convenience init — resolves activitySetID from the activity's first active set
@@ -327,6 +329,12 @@ final class TimeBlock {
         let raw          = (endTime ?? Date()).timeIntervalSince(startTime)
         let currentPause = isPaused ? Date().timeIntervalSince(pauseStartTime ?? Date()) : 0
         return max(0, raw - totalPauseDuration - currentPause)
+    }
+    
+    var remainingDuration: TimeInterval? {
+            guard let target = targetDuration else { return nil }
+            let remain = target - duration
+            return remain > 0 ? remain : 0
     }
 
     var isActive:    Bool   { endTime == nil && !isPaused }

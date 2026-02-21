@@ -61,7 +61,12 @@ struct TrackingView: View {
                     onPause: { manager.pauseCurrentActivity() },
                     onStop:  { manager.stopCurrentActivity() },
                     onResume: { manager.resumeFromPause() },
-                    onQuickRemark: { showingQuickRemark = true }
+                    onQuickRemark: { showingQuickRemark = true },
+                    onSetTarget: { target in
+                        if let currentBlock = manager.currentTimeBlock {
+                            manager.setTargetDuration(for: currentBlock, duration: target)
+                        }
+                    }
                 )
 
                 if activitySets.count > 1 {
@@ -366,6 +371,10 @@ struct CurrentActivityCard: View {
     let onStop: () -> Void
     let onResume: () -> Void
     let onQuickRemark: () -> Void
+    let onSetTarget: (TimeInterval?) -> Void // NEW
+    
+    @State private var showingTimerInput = false
+    @State private var targetMinutes: Double = 25
 
     var body: some View {
         VStack(spacing: 16) {
@@ -388,12 +397,71 @@ struct CurrentActivityCard: View {
             HStack {
                 Circle().fill(Color(hex: block.activityColor)).frame(width: 16, height: 16)
                 Text(block.activityName).font(.title2).fontWeight(.semibold)
+                
+                Spacer()
+                
+                // NEW: Inline timer toggle button
+                Button {
+                    withAnimation { showingTimerInput.toggle() }
+                } label: {
+                    Image(systemName: block.targetDuration != nil ? "bell.badge.fill" : "bell")
+                        .foregroundStyle(block.targetDuration != nil ? .orange : .secondary)
+                }
             }
 
-            Text(block.duration.detailedFormattedDuration)
-                .font(.system(size: 48, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .contentTransition(.numericText())
+            // NEW: Conditional display for Countdown vs Elapsed Time
+            if let target = block.targetDuration {
+                let remaining = max(0, target - block.duration)
+                VStack(spacing: 4) {
+                    Text(remaining.detailedFormattedDuration)
+                        .font(.system(size: 48, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .foregroundStyle(remaining == 0 ? .red : .primary)
+                    
+                    Text("remaining of \(target.formattedDuration)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Text(block.duration.detailedFormattedDuration)
+                    .font(.system(size: 48, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+            }
+
+            // NEW: Inline Timer Input
+            if showingTimerInput {
+                VStack(spacing: 12) {
+                    Divider()
+                    HStack {
+                        Stepper("\(Int(targetMinutes)) min", value: $targetMinutes, in: 1...120, step: 5)
+                            .labelsHidden()
+                        
+                        Text("\(Int(targetMinutes)) min")
+                            .font(.headline)
+                            .monospacedDigit()
+                        
+                        Spacer()
+                        
+                        if block.targetDuration != nil {
+                            Button("Clear") {
+                                onSetTarget(nil)
+                                withAnimation { showingTimerInput = false }
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                        }
+                        
+                        Button("Set Goal") {
+                            onSetTarget(targetMinutes * 60)
+                            withAnimation { showingTimerInput = false }
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    Divider()
+                }
+            }
 
             if isPaused {
                 HStack(spacing: 6) {
@@ -416,6 +484,7 @@ struct CurrentActivityCard: View {
             Text("Since \(block.startTime, style: .time)").font(.caption).foregroundStyle(.secondary)
         }
 
+        // Action Buttons
         VStack(spacing: 12) {
             HStack(spacing: 20) {
                 if isPaused {
