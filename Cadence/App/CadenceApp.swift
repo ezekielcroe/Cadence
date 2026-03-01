@@ -4,6 +4,7 @@ import UserNotifications
 
 @main
 struct CadenceApp: App {
+    private let notificationDelegate = NotificationDelegate()
     let modelContainer: ModelContainer
     
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
@@ -15,8 +16,8 @@ struct CadenceApp: App {
                 ActivitySet.self,
                 TimeBlock.self,
                 TimeBlockRule.self,
-                Remark.self,       // NEW: first-class remarks
-                DayNote.self       // NEW: daily intention + reflection
+                Remark.self,
+                DayNote.self
             ])
             
             modelContainer = try ModelContainer(
@@ -26,6 +27,7 @@ struct CadenceApp: App {
             
             setupDefaultData()
             requestNotificationPermissions()
+            UNUserNotificationCenter.current().delegate = notificationDelegate
             JournalNotificationManager.shared.rescheduleAll()
             
         } catch {
@@ -49,7 +51,7 @@ struct CadenceApp: App {
         
         // Check if data exists
         let existingSets = (try? context.fetch(FetchDescriptor<ActivitySet>())) ?? []
-        guard existingSets.isEmpty else { return } // [cite: 13]
+        guard existingSets.isEmpty else { return }
         
         // MARK: 1. Create Sets
         let workSet     = ActivitySet(name: "Work",     isActive: true)
@@ -96,10 +98,9 @@ struct CadenceApp: App {
         workActivitiesArray.append(commuteActivity)
         
         // Assign to Set
-        workSet.activities = workActivitiesArray // [cite: 17]
+        workSet.activities = workActivitiesArray
         
         // MARK: 4. Personal Specific Activities
-        // Note: Removed "Travel" and "Eating" to use the shared instances instead
         let personalActivitiesData: [(String, String, String)] = [
             ("Sleep",         "#3F51B5", "😴"),
             ("Exercise",      "#F44336", "💪"),
@@ -122,18 +123,14 @@ struct CadenceApp: App {
             personalActivitiesArray.append(activity)
         }
         
-        // Add shared activities to Personal
-        // Note: We reuse the exact same objects created in Step 2
         personalActivitiesArray.append(mealsActivity)
         personalActivitiesArray.append(commuteActivity)
         
         // Assign to Set
-        personalSet.activities = personalActivitiesArray // [cite: 20]
+        personalSet.activities = personalActivitiesArray
         
         // MARK: 5. Time Block Rules
         let calendar = Calendar.current
-        
-        // [cite: 21, 22, 23]
         let workStart     = calendar.date(from: DateComponents(hour: 8,  minute: 30))!
         let workEnd       = calendar.date(from: DateComponents(hour: 18, minute: 0))!
         let personalStart = calendar.date(from: DateComponents(hour: 18, minute: 0))!
@@ -146,7 +143,7 @@ struct CadenceApp: App {
             linkedSetID: workSet.id,
             daysOfWeek: [],
             trackingMode: .on
-        )) // [cite: 24]
+        ))
         
         context.insert(TimeBlockRule(
             name: "Personal Time",
@@ -155,9 +152,9 @@ struct CadenceApp: App {
             linkedSetID: personalSet.id,
             daysOfWeek: [],
             trackingMode: .on
-        )) // [cite: 25]
+        ))
         
-        try? context.save() // [cite: 26]
+        try? context.save() 
     }
 
     // MARK: - Permissions

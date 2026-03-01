@@ -256,7 +256,7 @@ extension TimeBlockRule {
         
         let calendar = Calendar.current
         let gapStart = timeRange.lowerBound
-        let gapEnd = timeRange.upperBound
+        _ = timeRange.upperBound
         
         // Convert rule start/end to minutes-from-midnight for easy comparison
         let ruleStartMins = calendar.component(.hour, from: startTime) * 60 + calendar.component(.minute, from: startTime)

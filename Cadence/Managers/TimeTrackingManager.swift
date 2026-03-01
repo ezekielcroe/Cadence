@@ -1,5 +1,6 @@
 // TimeTrackingManager.swift
 // Cadence
+//
 
 import Foundation
 import SwiftData
@@ -7,6 +8,7 @@ import Combine
 import UIKit
 import UserNotifications
 import AudioToolbox
+import AVFoundation
 
 // MARK: - TimeTrackingManager
 
@@ -34,6 +36,9 @@ class TimeTrackingManager: ObservableObject {
 
     private var timer: Timer?
     private let historyManager = HistoryManager.shared
+
+    /// Audio player for foreground timer completion sound
+    private var audioPlayer: AVAudioPlayer?
 
     // MARK: - Initialization
 
@@ -79,6 +84,16 @@ class TimeTrackingManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "backgroundEnteredTime")
     }
 
+    // MARK: - Keep Screen On
+
+    /// Call this whenever tracking state changes to update idle timer.
+    /// Reads the user preference and only keeps screen on when actively tracking.
+    func updateIdleTimerState() {
+        let keepScreenOn = UserDefaults.standard.bool(forKey: "keepScreenOnWhileTracking")
+        let isTracking = currentTimeBlock != nil && currentTimeBlock?.endTime == nil
+        UIApplication.shared.isIdleTimerDisabled = keepScreenOn && isTracking
+    }
+
     // MARK: - Set Auto-Switching
 
     var shouldAutoSwitchSets: Bool {
@@ -112,7 +127,9 @@ class TimeTrackingManager: ObservableObject {
         currentTimeBlock = newBlock
 
         clearBackgroundState()
+        cancelInactivityReminder()
         saveAndInvalidate(date: now)
+        updateIdleTimerState()
 
         if let target = targetDuration {
             scheduleTargetAlarm(duration: target, activityName: activity.name)
@@ -124,7 +141,7 @@ class TimeTrackingManager: ObservableObject {
     func setTargetDuration(for block: TimeBlock, duration: TimeInterval?) {
         block.targetDuration = duration
         saveContext()
-        
+
         if let target = duration {
             // Calculate how much time is remaining right now
             let remaining = max(0, target - block.duration)
@@ -135,27 +152,35 @@ class TimeTrackingManager: ObservableObject {
             cancelTargetAlarm()
         }
     }
-    
+
     private func checkTargetDuration() {
         guard let current = currentTimeBlock, let target = current.targetDuration else { return }
-        
+        // Don't check while paused — the notification was already cancelled/deferred
+        guard !current.isPaused else { return }
+
         if current.duration >= target {
             current.targetDuration = nil
             stopCurrentActivity()
-            
+
+            // Foreground completion feedback
             HapticManager.shared.notification(type: .success)
-            AudioServicesPlayAlertSound(SystemSoundID(1304))
+            playTimerCompletionSound()
         }
     }
+
+    // MARK: - Target Alarm Notification
 
     private func scheduleTargetAlarm(duration: TimeInterval, activityName: String) {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: ["targetAlarm"])
 
+        guard duration > 0 else { return }
+
         let content = UNMutableNotificationContent()
-        content.title = "Time is up!"
-        content.body = "Your session for \(activityName) has ended."
-        content.sound = .default
+        content.title = "Time's Up!"
+        content.body = "Your \(activityName) session has ended."
+        content.sound = UNNotificationSound.defaultCritical
+        content.interruptionLevel = .timeSensitive
 
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: duration, repeats: false)
         let request = UNNotificationRequest(identifier: "targetAlarm", content: content, trigger: trigger)
@@ -166,8 +191,55 @@ class TimeTrackingManager: ObservableObject {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["targetAlarm"])
     }
 
+    /// Re-schedule the alarm when pausing/resuming changes the effective remaining time.
+    private func rescheduleTargetAlarmIfNeeded() {
+        guard let current = currentTimeBlock,
+              let target = current.targetDuration,
+              !current.isPaused else {
+            // If paused, cancel — we'll reschedule on resume
+            if currentTimeBlock?.targetDuration != nil {
+                cancelTargetAlarm()
+            }
+            return
+        }
+
+        let remaining = max(0, target - current.duration)
+        if remaining > 0 {
+            scheduleTargetAlarm(duration: remaining, activityName: current.activityName)
+        }
+    }
+
+    // MARK: - Foreground Timer Completion Sound
+
+    /// Plays a prominent alert sound when the timer completes while the app is foregrounded.
+    private func playTimerCompletionSound() {
+        // Try the tri-tone alert first, fall back to system sound
+        if let url = findAlertSoundURL() {
+            do {
+                audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer?.play()
+                return
+            } catch { /* fall through */ }
+        }
+        // Fallback: system alert sound (1005 = "default alert")
+        AudioServicesPlayAlertSound(SystemSoundID(1005))
+    }
+
+    /// Searches for a built-in alert tone.
+    private func findAlertSoundURL() -> URL? {
+        // tri-tone is the classic iOS timer sound
+        let paths = [
+            "/System/Library/Audio/UISounds/alarm.caf",
+            "/System/Library/Audio/UISounds/nano/alarm_nightstand_haptic.caf",
+            "/System/Library/Audio/UISounds/SIMToolkitCallDropped.caf"
+        ]
+        return paths.compactMap { URL(fileURLWithPath: $0) }
+            .first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    // MARK: - Pause / Resume
+
     /// Pause the current activity in-place.
-    /// The block remains active; only `isPaused`, `pauseStartTime`, and `pauseCount` change.
     func pauseCurrentActivity() {
         guard let current = currentTimeBlock,
               !current.isPaused,
@@ -176,6 +248,11 @@ class TimeTrackingManager: ObservableObject {
         current.isPaused = true
         current.pauseStartTime = Date()
         current.pauseCount += 1
+
+        // Cancel alarm while paused — time isn't counting down
+        if current.targetDuration != nil {
+            cancelTargetAlarm()
+        }
 
         clearBackgroundState()
         saveContext()
@@ -187,10 +264,12 @@ class TimeTrackingManager: ObservableObject {
 
         closePause(on: current, at: Date())
         saveContext()
+
+        // Reschedule alarm with corrected remaining time
+        rescheduleTargetAlarmIfNeeded()
     }
 
-    /// Stop the current activity. No gap block is created.
-    /// Any gap that results will appear as a computed gap in RecordsView.
+    /// Stop the current activity.
     func stopCurrentActivity() {
         guard let current = currentTimeBlock else { return }
         let now = Date()
@@ -203,6 +282,8 @@ class TimeTrackingManager: ObservableObject {
         clearBackgroundState()
         saveAndInvalidate(date: now)
         cancelTargetAlarm()
+        updateIdleTimerState()
+        scheduleInactivityReminder()
     }
 
     // MARK: - Pause Helpers
@@ -216,8 +297,6 @@ class TimeTrackingManager: ObservableObject {
     }
 
     /// Called by the timer when a pause has exceeded the 10-minute limit.
-    /// The block is ended at (pauseStart + maxPauseDuration). The elapsed time
-    /// between that point and now will surface as a computed gap.
     private func autostopDueToPauseTimeout(current: TimeBlock) {
         guard let pauseStart = current.pauseStartTime else { return }
 
@@ -231,6 +310,9 @@ class TimeTrackingManager: ObservableObject {
 
         saveAndInvalidate(date: cappedPauseEnd)
         notifyPauseTimeout()
+        cancelTargetAlarm()
+        updateIdleTimerState()
+        scheduleInactivityReminder()
     }
 
     private func endCurrentActivityIfNeeded(at time: Date, state: String) {
@@ -286,8 +368,6 @@ class TimeTrackingManager: ObservableObject {
     }
 
     @objc private func appDidEnterBackground() {
-        // Track background entry for both active and paused blocks.
-        // For paused blocks the pause timeout still applies.
         guard let current = currentTimeBlock, current.endTime == nil else { return }
         backgroundEnteredTime = Date()
         saveBackgroundState()
@@ -310,32 +390,33 @@ class TimeTrackingManager: ObservableObject {
         if current.isPaused {
             let totalPauseElapsed = Date().timeIntervalSince(current.pauseStartTime ?? backgroundTime)
             if totalPauseElapsed > maxPauseDuration {
-                // autostopDueToPauseTimeout handles its own saveAndInvalidate
                 autostopDueToPauseTimeout(current: current)
             }
-            // If still within limit, resume normally — user comes back to paused state.
         } else if elapsed > maxBackgroundDuration {
             handleBackgroundTimeout(current: current, backgroundTime: backgroundTime)
-            // cappedEnd is the date the block actually ended — invalidate that day
             let cappedEnd = backgroundTime.addingTimeInterval(maxBackgroundDuration)
             saveAndInvalidate(date: cappedEnd)
             checkAndApplyCurrentTimeBlockRule()
             return
         }
 
-        // No block ended — persist any state changes (e.g. resumed from pause within limit)
         saveContext()
         checkAndApplyCurrentTimeBlockRule()
+
+        // Reschedule target alarm with corrected remaining time after returning from background
+        rescheduleTargetAlarmIfNeeded()
     }
 
     /// Caps the block at (backgroundTime + maxBackgroundDuration) and stops tracking.
-    /// The time between the cap and now will be a computed gap — no untracked block needed.
     private func handleBackgroundTimeout(current: TimeBlock, backgroundTime: Date) {
         let cappedEnd = backgroundTime.addingTimeInterval(maxBackgroundDuration)
         current.endTime = cappedEnd
         current.stopState = "stopped"
         currentTimeBlock = nil
         notifyActivityStopped()
+        cancelTargetAlarm()
+        updateIdleTimerState()
+        scheduleInactivityReminder()
     }
 
     // MARK: - Session Recovery
@@ -368,8 +449,12 @@ class TimeTrackingManager: ObservableObject {
             }
             clearBackgroundState()
         }
-        
+
         cancelBackgroundReminder()
+        updateIdleTimerState()
+
+        // Ensure target alarm is accurate after app relaunch
+        rescheduleTargetAlarmIfNeeded()
     }
 
     // MARK: - Time Block Rule Application
@@ -504,6 +589,36 @@ class TimeTrackingManager: ObservableObject {
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         )
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Inactivity Reminder
+
+    /// Schedules a notification to remind the user they haven't logged any activity.
+    /// Called whenever the user stops an activity (or a block is auto-stopped).
+    private func scheduleInactivityReminder() {
+        guard notificationsEnabled else { return }
+        let enabled = UserDefaults.standard.bool(forKey: "inactivityReminderEnabled")
+        guard enabled else { return }
+
+        // Default 30 minutes; stored in seconds
+        let interval = UserDefaults.standard.double(forKey: "inactivityReminderInterval")
+        let reminderInterval = interval > 0 ? interval : 1800
+
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: ["inactivityReminder"])
+
+        let content = UNMutableNotificationContent()
+        content.title = "Still there?"
+        content.body = "You haven't logged any activity in \(reminderInterval.formattedDuration). Tap to start tracking."
+        content.sound = .default
+
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: reminderInterval, repeats: false)
+        let request = UNNotificationRequest(identifier: "inactivityReminder", content: content, trigger: trigger)
+        center.add(request)
+    }
+
+    private func cancelInactivityReminder() {
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["inactivityReminder"])
     }
 
     // MARK: - Persistence

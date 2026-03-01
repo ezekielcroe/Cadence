@@ -88,6 +88,12 @@ struct SettingsView: View {
                     }
 
                     NavigationLink {
+                        TimerDisplaySettingsView()
+                    } label: {
+                        Label("Timer Display", systemImage: "timer")
+                    }
+
+                    NavigationLink {
                         NotificationSettingsView()
                     } label: {
                         Label("Notifications", systemImage: "bell.fill")
@@ -272,11 +278,75 @@ struct BackgroundTrackingView: View {
     }
 }
 
-// MARK: - Notification Settings View
+// MARK: - Timer Display Settings View (NEW)
+
+struct TimerDisplaySettingsView: View {
+    @AppStorage("keepScreenOnWhileTracking") private var keepScreenOn = false
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Keep Screen On While Tracking", isOn: $keepScreenOn)
+            } header: {
+                Text("Display")
+            } footer: {
+                Text("Prevents the screen from auto-locking while an activity is being tracked. The screen will dim normally but won't turn off. This ensures the timer stays visible and in-app sounds play reliably. Uses more battery.")
+            }
+
+            if keepScreenOn {
+                Section {
+                    HStack(spacing: 12) {
+                        Image(systemName: "battery.50")
+                            .foregroundStyle(.orange)
+                            .font(.title3)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Battery Impact")
+                                .font(.subheadline).fontWeight(.medium)
+                            Text("Keeping the screen on will use more battery. Consider plugging in during long sessions.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Why Keep Screen On?", systemImage: "info.circle")
+                        .font(.headline)
+
+                    Text("• Timer completion sounds play reliably")
+                    Text("• Countdown stays visible at a glance")
+                    Text("• No need to unlock to check progress")
+                    Text("• Screen turns off automatically when you stop tracking")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            } header: {
+                Text("About")
+            }
+        }
+        .navigationTitle("Timer Display")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Notification Settings View (UPDATED)
 
 struct NotificationSettingsView: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
+    @AppStorage("inactivityReminderEnabled") private var inactivityEnabled = false
+    @AppStorage("inactivityReminderInterval") private var inactivityInterval: Double = 1800
+
     @State private var showingPermissionAlert = false
+
+    let inactivityOptions: [(label: String, value: TimeInterval)] = [
+        ("15 minutes",  900),
+        ("30 minutes", 1800),
+        ("1 hour",     3600),
+        ("2 hours",    7200),
+        ("4 hours",   14400),
+    ]
 
     var body: some View {
         Form {
@@ -308,8 +378,35 @@ struct NotificationSettingsView: View {
                         Text("You'll be notified when activity sets change automatically")
                             .font(.caption)
                     }
+
+                    HStack {
+                        Image(systemName: "timer").foregroundStyle(.red)
+                        Text("Timer completion alerts play even when the app is backgrounded")
+                            .font(.caption)
+                    }
                 } header: {
                     Text("Active Notifications")
+                }
+
+                // MARK: Inactivity Reminder (NEW)
+                Section {
+                    Toggle("Inactivity Reminder", isOn: $inactivityEnabled)
+
+                    if inactivityEnabled {
+                        Picker("Remind after", selection: $inactivityInterval) {
+                            ForEach(inactivityOptions, id: \.value) { option in
+                                Text(option.label).tag(option.value)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Inactivity Reminder")
+                } footer: {
+                    if inactivityEnabled {
+                        Text("You'll be reminded if you haven't started a new activity within \(inactivityInterval.formattedDuration) of stopping the last one.")
+                    } else {
+                        Text("Get a nudge when you forget to log activities for a while.")
+                    }
                 }
             }
         }

@@ -96,6 +96,15 @@ struct TrackingView: View {
         .onReceive(timer) { _ in
             if manager.currentTimeBlock != nil { manager.objectWillChange.send() }
         }
+        .onAppear {
+            // Ensure idle timer state is correct when this tab appears
+            manager.updateIdleTimerState()
+        }
+        .onDisappear {
+            // Re-enable idle timer when leaving tracking tab
+            // (updateIdleTimerState will handle this correctly since
+            //  the user might navigate to settings mid-session)
+        }
         .sheet(isPresented: $showingQuickRemark) {
             if let block = manager.currentTimeBlock {
                 QuickRemarkSheet(timeBlock: block)
@@ -231,10 +240,9 @@ struct IntentionSheet: View {
 
         if let note = existingNote {
             note.intention = trimmed
-            note.intentionUpdatedAt = Date()       // stamp write time
+            note.intentionUpdatedAt = Date()
         } else {
             let note = DayNote(date: Date(), intention: trimmed)
-            // intentionUpdatedAt is set inside DayNote.init when intention is non-empty
             modelContext.insert(note)
         }
         try? modelContext.save()
@@ -371,7 +379,7 @@ struct CurrentActivityCard: View {
     let onStop: () -> Void
     let onResume: () -> Void
     let onQuickRemark: () -> Void
-    let onSetTarget: (TimeInterval?) -> Void // NEW
+    let onSetTarget: (TimeInterval?) -> Void
     
     @State private var showingTimerInput = false
     @State private var targetMinutes: Double = 25
@@ -400,7 +408,7 @@ struct CurrentActivityCard: View {
                 
                 Spacer()
                 
-                // NEW: Inline timer toggle button
+                // Inline timer toggle button
                 Button {
                     withAnimation { showingTimerInput.toggle() }
                 } label: {
@@ -409,7 +417,7 @@ struct CurrentActivityCard: View {
                 }
             }
 
-            // NEW: Conditional display for Countdown vs Elapsed Time
+            // Conditional display for Countdown vs Elapsed Time
             if let target = block.targetDuration {
                 let remaining = max(0, target - block.duration)
                 VStack(spacing: 4) {
@@ -430,7 +438,7 @@ struct CurrentActivityCard: View {
                     .contentTransition(.numericText())
             }
 
-            // NEW: Inline Timer Input
+            // Inline Timer Input
             if showingTimerInput {
                 VStack(spacing: 12) {
                     Divider()
@@ -602,4 +610,3 @@ struct ActivitySetPicker: View {
         try? modelContext.save()
     }
 }
-
