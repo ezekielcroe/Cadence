@@ -1,8 +1,6 @@
 // RecordsView.swift
 // Cadence
 //
-// REFACTORED: Adds Today quick-jump, persistent filter bar, undo system,
-// and gap overview toggle.
 
 import SwiftUI
 import SwiftData
@@ -16,6 +14,25 @@ struct UndoableAction: Identifiable {
     let restore: () -> Void
 }
 
+// MARK: - Add Block Mode
+
+enum AddBlockMode: Identifiable {
+    case manual
+    case fillGap(ComputedGap)
+
+    var id: String {
+        switch self {
+        case .manual:            return "manual"
+        case .fillGap(let gap):  return "gap-\(gap.id)"
+        }
+    }
+
+    var gap: ComputedGap? {
+        if case .fillGap(let gap) = self { return gap }
+        return nil
+    }
+}
+
 // MARK: - RecordsView
 
 struct RecordsView: View {
@@ -24,8 +41,7 @@ struct RecordsView: View {
     // MARK: - Navigation State
     @State private var currentMonth: Date = Date()
     @State private var showArchived = false
-    @State private var showingAddBlock = false
-    @State private var prefilledGap: ComputedGap? = nil // FIX: Track intended gap fill
+    @State private var addBlockMode: AddBlockMode? = nil
 
     // MARK: - Filter State
     @State private var searchText = ""
@@ -102,8 +118,7 @@ struct RecordsView: View {
                             gapOverviewMode: gapOverviewMode,
                             onDeleteBlock: { block in recordUndo(for: block) },
                             onFillGap: { gap in
-                                prefilledGap = gap
-                                showingAddBlock = true
+                                addBlockMode = .fillGap(gap)
                             }
                         )
                         .id(currentMonth)
@@ -130,7 +145,7 @@ struct RecordsView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingAddBlock = true } label: {
+                    Button { addBlockMode = .manual } label: {
                         Image(systemName: "plus")
                     }
                 }
@@ -157,17 +172,15 @@ struct RecordsView: View {
                     onSave: { try? modelContext.save() }
                 )
             }
-            .sheet(isPresented: $showingAddBlock) {
+            .sheet(item: $addBlockMode) { mode in
                 AddBlockSheet(
                     date: currentMonth,
-                    prefilledGap: prefilledGap,
+                    prefilledGap: mode.gap,
                     conflictDetector: conflictDetector ?? ConflictDetector(modelContext: modelContext),
                     onSave: {
                         try? modelContext.save()
-                        prefilledGap = nil
                     }
                 )
-                .onDisappear { prefilledGap = nil } // Clear gap state when dismissed
             }
         }
         .onAppear {
@@ -464,5 +477,3 @@ struct FilterChipLabel: View {
         .cornerRadius(16)
     }
 }
-
-

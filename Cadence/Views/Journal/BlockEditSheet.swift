@@ -1,7 +1,7 @@
+// ============================================================
+// FILE: Cadence/Views/Journal/BlockEditSheet.swift
 //
-//  BlockEditSheet.swift
-//  Cadence
-//
+// ============================================================
 
 import SwiftUI
 import SwiftData
@@ -32,7 +32,6 @@ struct BlockEditSheet: View {
     @State private var showingConflictConfirmation = false
     @State private var showingSplitSheet = false
     @State private var showingActivityPicker = false
-    @State private var spansNextDay: Bool
 
     // Remarks for this block only
     private var blockRemarks: [Remark] {
@@ -48,36 +47,18 @@ struct BlockEditSheet: View {
         _editedStartTime  = State(initialValue: block.startTime)
         _editedEndTime    = State(initialValue: block.endTime ?? Date())
         _editedActivityID = State(initialValue: block.activityID)
-
-        // Pre-set the toggle if this is already an overnight block
-        let cal         = Calendar.current
-        let existingEnd = block.endTime ?? block.startTime
-        _spansNextDay   = State(initialValue:
-            !cal.isDate(block.startTime, inSameDayAs: existingEnd)
-        )
     }
 
     // MARK: - Computed
 
     private var hasChanges: Bool {
         editedStartTime  != block.startTime     ||
-        resolvedEndTime  != (block.endTime ?? Date()) ||
+        editedEndTime    != (block.endTime ?? Date()) ||
         editedActivityID != block.activityID
-    }
-    
-    private var resolvedEndTime: Date {           // ADD — from patch Step 3
-        guard spansNextDay else { return editedEndTime }
-        let cal      = Calendar.current
-        let nextDay  = cal.date(byAdding: .day, value: 1, to: editedStartTime)!
-        let endComps = cal.dateComponents([.hour, .minute], from: editedEndTime)
-        return cal.date(bySettingHour: endComps.hour ?? 0,
-                        minute:        endComps.minute ?? 0,
-                        second:        0,
-                        of:            nextDay) ?? nextDay
     }
 
     private var selectedActivity: Activity? { activities.first { $0.id == editedActivityID } }
-    private var editedDuration: TimeInterval { resolvedEndTime.timeIntervalSince(editedStartTime) }
+    private var editedDuration: TimeInterval { editedEndTime.timeIntervalSince(editedStartTime) }
 
     private var canSave: Bool {
         guard hasChanges, let validation = validationResult else { return false }
@@ -182,7 +163,7 @@ struct BlockEditSheet: View {
         .presentationDetents([.large])
     }
 
-    // MARK: - Subviews (unchanged from original)
+    // MARK: - Subviews
 
     private var currentStatusView: some View {
         HStack(spacing: 12) {
@@ -228,52 +209,30 @@ struct BlockEditSheet: View {
         }
     }
 
-        @ViewBuilder
-        private var timeEditors: some View {
-            HStack {
-                Text("Start")
-                Spacer()
-                DatePicker("", selection: $editedStartTime,
-                           in: allowedStartRange,
-                           displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-            }
+    @ViewBuilder
+    private var timeEditors: some View {
+        DatePicker("Start", selection: $editedStartTime,
+                   displayedComponents: [.date, .hourAndMinute])
 
-            Toggle(isOn: $spansNextDay) {
-                Label("Spans midnight", systemImage: "moon.fill")
-            }
-            .tint(.indigo)
-            .onChange(of: spansNextDay) { _, _ in validateChanges() }
-
+        if block.endTime != nil {
+            DatePicker("End", selection: $editedEndTime,
+                       displayedComponents: [.date, .hourAndMinute])
+        } else {
             HStack {
                 Text("End")
                 Spacer()
-                if block.endTime != nil {
-                    DatePicker("", selection: $editedEndTime,
-                               in: allowedEndRange,
-                               displayedComponents: .hourAndMinute)
-                        .labelsHidden()
-                } else {
-                    Text("Ongoing").foregroundStyle(.green).fontWeight(.medium)
-                }
-            }
-
-            HStack {
-                Text("Duration")
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(editedDuration > 0 ? editedDuration.formattedDuration : "—")
-                        .foregroundStyle(editedDuration > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
-                        .monospacedDigit()
-                    if spansNextDay {
-                        Text("next day")
-                            .font(.caption2)
-                            .foregroundStyle(.indigo)
-                    }
-                }
+                Text("Ongoing").foregroundStyle(.green).fontWeight(.medium)
             }
         }
 
+        HStack {
+            Text("Duration")
+            Spacer()
+            Text(editedDuration > 0 ? editedDuration.formattedDuration : "—")
+                .foregroundStyle(editedDuration > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
+                .monospacedDigit()
+        }
+    }
 
     private func conflictWarnings(_ validation: ValidationResult) -> some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -286,25 +245,6 @@ struct BlockEditSheet: View {
                 }
             }
         }
-    }
-
-    // MARK: - Timestamp Boundaries
-
-    private var allowedStartRange: ClosedRange<Date> {
-        let (prev, _) = getAdjacentActivityBlocks(for: block)
-        let earliest  = prev?.endTime ?? Calendar.current.startOfDay(for: block.startTime)
-        let latest    = editedEndTime
-        return earliest...max(earliest, latest)
-    }
-
-    private var allowedEndRange: ClosedRange<Date> {
-        let (_, next) = getAdjacentActivityBlocks(for: block)
-        let earliest  = editedStartTime
-        // Allow up to 36 hours after start so overnight blocks (e.g. 11pm → 7am)
-        // can be set freely. If a following block exists, respect its start time.
-        let latest    = next?.startTime
-            ?? editedStartTime.addingTimeInterval(36 * 3600)
-        return earliest...max(earliest, latest)
     }
 
     // MARK: - Actions
@@ -328,7 +268,7 @@ struct BlockEditSheet: View {
         validationResult = conflictDetector.validateEdit(
             block: block,
             newStart: editedStartTime,
-            newEnd: resolvedEndTime
+            newEnd: editedEndTime
         )
     }
 
@@ -343,7 +283,7 @@ struct BlockEditSheet: View {
         let oldEnd   = block.endTime
 
         block.startTime = editedStartTime
-        if block.endTime != nil { block.endTime = resolvedEndTime }   // was: editedEndTime
+        if block.endTime != nil { block.endTime = editedEndTime }
 
         if let newID = editedActivityID,
            newID != block.activityID,
@@ -355,13 +295,13 @@ struct BlockEditSheet: View {
         }
 
         handleTimestampAdjustments(oldStart: oldStart, oldEnd: oldEnd,
-                                   newStart: editedStartTime, newEnd: resolvedEndTime)
+                                   newStart: editedStartTime, newEnd: editedEndTime)
         try? modelContext.save()
-        
-        // NEW: Invalidate (cover both old and new dates in case user moved the block to a new day)
+
+        // Invalidate (cover both old and new dates in case user moved the block to a new day)
         HistoryManager.shared.invalidateDate(oldStart, in: modelContext)
         if !Calendar.current.isDate(oldStart, inSameDayAs: editedStartTime) {
-        HistoryManager.shared.invalidateDate(editedStartTime, in: modelContext)
+            HistoryManager.shared.invalidateDate(editedStartTime, in: modelContext)
         }
         onSave()
         dismiss()

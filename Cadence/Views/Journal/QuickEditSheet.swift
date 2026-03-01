@@ -1,9 +1,6 @@
-// QuickEditSheet.swift
-// Cadence
-//
-// FIX #6: Split BlockEditSheet into Quick Edit (default) and Full Edit.
-// Quick Edit shows: Time, Activity, Duration — fits in .medium detent.
-// "More Options" navigates to FullEditSheet for remarks, split, metadata.
+// ============================================================
+// FILE: Cadence/Views/Journal/QuickEditSheet.swift
+// ============================================================
 
 import SwiftUI
 import SwiftData
@@ -24,7 +21,6 @@ struct QuickEditSheet: View {
     @State private var editedStartTime: Date
     @State private var editedEndTime: Date
     @State private var editedActivityID: UUID?
-    @State private var spansNextDay: Bool
 
     // UI state
     @State private var validationResult: ValidationResult?
@@ -46,33 +42,18 @@ struct QuickEditSheet: View {
         _editedStartTime  = State(initialValue: block.startTime)
         _editedEndTime    = State(initialValue: block.endTime ?? Date())
         _editedActivityID = State(initialValue: block.activityID)
-
-        let cal = Calendar.current
-        let existingEnd = block.endTime ?? block.startTime
-        _spansNextDay = State(initialValue: !cal.isDate(block.startTime, inSameDayAs: existingEnd))
     }
 
     // MARK: - Computed
 
     private var hasChanges: Bool {
         editedStartTime  != block.startTime     ||
-        resolvedEndTime  != (block.endTime ?? Date()) ||
+        editedEndTime    != (block.endTime ?? Date()) ||
         editedActivityID != block.activityID
     }
 
-    private var resolvedEndTime: Date {
-        guard spansNextDay else { return editedEndTime }
-        let cal      = Calendar.current
-        let nextDay  = cal.date(byAdding: .day, value: 1, to: editedStartTime)!
-        let endComps = cal.dateComponents([.hour, .minute], from: editedEndTime)
-        return cal.date(bySettingHour: endComps.hour ?? 0,
-                        minute:        endComps.minute ?? 0,
-                        second:        0,
-                        of:            nextDay) ?? nextDay
-    }
-
     private var selectedActivity: Activity? { activities.first { $0.id == editedActivityID } }
-    private var editedDuration: TimeInterval { resolvedEndTime.timeIntervalSince(editedStartTime) }
+    private var editedDuration: TimeInterval { editedEndTime.timeIntervalSince(editedStartTime) }
 
     private var canSave: Bool {
         guard hasChanges, let validation = validationResult else { return false }
@@ -168,7 +149,6 @@ struct QuickEditSheet: View {
             }
             .onChange(of: editedStartTime) { _, _ in validateChanges() }
             .onChange(of: editedEndTime)   { _, _ in validateChanges() }
-            .onChange(of: spansNextDay)    { _, _ in validateChanges() }
             .onAppear { validateChanges() }
             .alert("Conflicts Detected", isPresented: $showingConflictConfirmation) {
                 Button("Cancel", role: .cancel) { }
@@ -258,31 +238,16 @@ struct QuickEditSheet: View {
 
     @ViewBuilder
     private var timeEditors: some View {
-        HStack {
-            Text("Start")
-            Spacer()
-            DatePicker("", selection: $editedStartTime,
-                       in: allowedStartRange,
-                       displayedComponents: .hourAndMinute)
-                .labelsHidden()
-        }
+        DatePicker("Start", selection: $editedStartTime,
+                   displayedComponents: [.date, .hourAndMinute])
 
         if block.endTime != nil {
-            Toggle(isOn: $spansNextDay) {
-                Label("Spans midnight", systemImage: "moon.fill")
-            }
-            .tint(.indigo)
-        }
-
-        HStack {
-            Text("End")
-            Spacer()
-            if block.endTime != nil {
-                DatePicker("", selection: $editedEndTime,
-                           in: allowedEndRange,
-                           displayedComponents: .hourAndMinute)
-                    .labelsHidden()
-            } else {
+            DatePicker("End", selection: $editedEndTime,
+                       displayedComponents: [.date, .hourAndMinute])
+        } else {
+            HStack {
+                Text("End")
+                Spacer()
                 Text("Ongoing").foregroundStyle(.green).fontWeight(.medium)
             }
         }
@@ -290,16 +255,9 @@ struct QuickEditSheet: View {
         HStack {
             Text("Duration")
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(editedDuration > 0 ? editedDuration.formattedDuration : "—")
-                    .foregroundStyle(editedDuration > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
-                    .monospacedDigit()
-                if spansNextDay {
-                    Text("next day")
-                        .font(.caption2)
-                        .foregroundStyle(.indigo)
-                }
-            }
+            Text(editedDuration > 0 ? editedDuration.formattedDuration : "—")
+                .foregroundStyle(editedDuration > 0 ? AnyShapeStyle(.secondary) : AnyShapeStyle(Color.red))
+                .monospacedDigit()
         }
     }
 
@@ -319,29 +277,13 @@ struct QuickEditSheet: View {
         }
     }
 
-    // MARK: - Timestamp Boundaries
-
-    private var allowedStartRange: ClosedRange<Date> {
-        let (prev, _) = getAdjacentActivityBlocks(for: block)
-        let earliest  = prev?.endTime ?? Calendar.current.startOfDay(for: block.startTime)
-        let latest    = editedEndTime
-        return earliest...max(earliest, latest)
-    }
-
-    private var allowedEndRange: ClosedRange<Date> {
-        let (_, next) = getAdjacentActivityBlocks(for: block)
-        let earliest  = editedStartTime
-        let latest    = next?.startTime ?? editedStartTime.addingTimeInterval(36 * 3600)
-        return earliest...max(earliest, latest)
-    }
-
     // MARK: - Actions
 
     private func validateChanges() {
         validationResult = conflictDetector.validateEdit(
             block: block,
             newStart: editedStartTime,
-            newEnd: resolvedEndTime
+            newEnd: editedEndTime
         )
     }
 
@@ -356,7 +298,7 @@ struct QuickEditSheet: View {
         let oldEnd   = block.endTime
 
         block.startTime = editedStartTime
-        if block.endTime != nil { block.endTime = resolvedEndTime }
+        if block.endTime != nil { block.endTime = editedEndTime }
 
         if let newID = editedActivityID,
            newID != block.activityID,
@@ -368,7 +310,7 @@ struct QuickEditSheet: View {
         }
 
         handleTimestampAdjustments(oldStart: oldStart, oldEnd: oldEnd,
-                                   newStart: editedStartTime, newEnd: resolvedEndTime)
+                                   newStart: editedStartTime, newEnd: editedEndTime)
         try? modelContext.save()
 
         HistoryManager.shared.invalidateDate(oldStart, in: modelContext)
@@ -418,7 +360,7 @@ struct QuickEditSheet: View {
     }
 }
 
-// MARK: - Activity Picker Sheet
+// MARK: - Activity Picker Sheet (unchanged — already groups by set)
 
 struct ActivityPickerSheet: View {
     @Environment(\.dismiss) private var dismiss

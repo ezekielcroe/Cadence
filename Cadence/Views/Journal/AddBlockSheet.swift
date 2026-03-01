@@ -1,11 +1,5 @@
 // ============================================================
-// FILE: Cadence/Views/Records/AddBlockSheet.swift
-
-// Change: Added `spansNextDay` Bool state and a "Spans midnight" toggle.
-// When toggled on, the end time is interpreted as being on the next calendar
-// day. The duration display and Save validation update accordingly.
-// No changes to the conflict detection or save logic — those already accept
-// cross-day ranges now that ConflictDetector.exceedsDayBoundary is removed.
+// FILE: Cadence/Views/Journal/AddBlockSheet.swift
 // ============================================================
 
 import SwiftUI
@@ -19,12 +13,13 @@ struct AddBlockSheet: View {
     let conflictDetector:  ConflictDetector
     let onSave:            () -> Void
 
-    @Query private var activities: [Activity]
+    @Query private var activities:   [Activity]
+    @Query private var activitySets: [ActivitySet]
 
     @State private var selectedActivity: Activity?
+    @State private var selectedSet:      ActivitySet?   // NEW: two-step selection
     @State private var startTime:        Date
     @State private var endTime:          Date
-    @State private var spansNextDay      = false
     @State private var remarkText        = ""
     @State private var validationResult: ValidationResult?
 
@@ -37,8 +32,6 @@ struct AddBlockSheet: View {
         if let gap = prefilledGap {
             _startTime = State(initialValue: gap.start)
             _endTime   = State(initialValue: gap.end)
-            let cal = Calendar.current
-            _spansNextDay = State(initialValue: !cal.isDate(gap.start, inSameDayAs: gap.end))
         } else {
             let calendar   = Calendar.current
             let components = calendar.dateComponents([.year, .month, .day, .hour], from: date)
@@ -51,21 +44,8 @@ struct AddBlockSheet: View {
 
     // MARK: - Computed
 
-    /// The resolved end time. When spansNextDay is on, the end DatePicker's
-    /// hour/minute value is applied to the day after startTime.
-    private var resolvedEndTime: Date {
-        guard spansNextDay else { return endTime }
-        let cal         = Calendar.current
-        let nextDay     = cal.date(byAdding: .day, value: 1, to: startTime)!
-        let endComps    = cal.dateComponents([.hour, .minute], from: endTime)
-        return cal.date(bySettingHour: endComps.hour ?? 0,
-                        minute:        endComps.minute ?? 0,
-                        second:        0,
-                        of:            nextDay) ?? nextDay
-    }
-
     private var duration: TimeInterval {
-        resolvedEndTime.timeIntervalSince(startTime)
+        endTime.timeIntervalSince(startTime)
     }
 
     private var canSave: Bool {
@@ -74,15 +54,24 @@ struct AddBlockSheet: View {
         (validationResult?.canProceedWithConfirmation ?? false)
     }
 
+    /// Activities belonging to the currently selected set, sorted by name.
+    private var activitiesForSelectedSet: [Activity] {
+        guard let set = selectedSet else { return [] }
+        return activities
+            .filter { $0.sets.contains(where: { $0.id == set.id }) }
+            .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
     // MARK: - Body
 
     var body: some View {
         NavigationStack {
             Form {
 
-                // MARK: Activity
+                // MARK: Activity — two-step: pick set, then pick activity
                 Section("Activity") {
                     if let activity = selectedActivity {
+                        // Show selected activity with Change button
                         HStack {
                             if let emoji = activity.emoji { Text(emoji) }
                             Circle()
@@ -90,54 +79,88 @@ struct AddBlockSheet: View {
                                 .frame(width: 20, height: 20)
                             Text(activity.name)
                             Spacer()
-                            Button("Change") { selectedActivity = nil }
+                            Button("Change") {
+                                selectedActivity = nil
+                                selectedSet = nil
+                            }
+                            .font(.caption)
+                        }
+                    } else if let set = selectedSet {
+                        // Step 2: Show activities in the chosen set
+                        HStack {
+                            Text(set.name)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Back") { selectedSet = nil }
                                 .font(.caption)
                         }
-                    } else {
-                        ForEach(activities.prefix(8)) { activity in
-                            Button {
-                                selectedActivity = activity
-                                validate()
-                            } label: {
-                                HStack {
-                                    if let emoji = activity.emoji { Text(emoji) }
-                                    Circle()
-                                        .fill(Color(hex: activity.color))
-                                        .frame(width: 16, height: 16)
-                                    Text(activity.name)
-                                        .foregroundStyle(.primary)
+
+                        if activitiesForSelectedSet.isEmpty {
+                            Text("No activities in this set")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            ForEach(activitiesForSelectedSet) { activity in
+                                Button {
+                                    selectedActivity = activity
+                                    validate()
+                                } label: {
+                                    HStack {
+                                        if let emoji = activity.emoji { Text(emoji) }
+                                        Circle()
+                                            .fill(Color(hex: activity.color))
+                                            .frame(width: 16, height: 16)
+                                        Text(activity.name)
+                                            .foregroundStyle(.primary)
+                                    }
                                 }
                             }
+                        }
+                    } else {
+                        // Step 1: Show activity sets
+                        ForEach(activitySets.sorted(by: { $0.name < $1.name })) { set in
+                            Button {
+                                selectedSet = set
+                            } label: {
+                                HStack {
+                                    Text(set.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if set.isActive {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    }
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                            }
+                        }
+
+                        if activitySets.isEmpty {
+                            Text("No activity sets configured")
+                                .font(.subheadline)
+                                .foregroundStyle(.tertiary)
                         }
                     }
                 }
 
-                // MARK: Time
+                // MARK: Time — full date + time pickers
                 Section("Time") {
-                    DatePicker("Start", selection: $startTime, displayedComponents: .hourAndMinute)
+                    DatePicker("Start", selection: $startTime, displayedComponents: [.date, .hourAndMinute])
                         .onChange(of: startTime) { _, _ in validate() }
 
-                    Toggle(isOn: $spansNextDay) {
-                        Label("Spans midnight", systemImage: "moon.fill")
-                    }
-                    .tint(.indigo)
-                    .onChange(of: spansNextDay) { _, _ in validate() }
-
-                    DatePicker("End", selection: $endTime, displayedComponents: .hourAndMinute)
+                    DatePicker("End", selection: $endTime, displayedComponents: [.date, .hourAndMinute])
                         .onChange(of: endTime) { _, _ in validate() }
 
                     HStack {
                         Text("Duration")
                         Spacer()
-                        if spansNextDay {
-                            Text("next day · \(duration > 0 ? duration.formattedDuration : "—")")
-                                .foregroundStyle(duration > 0 ? Color.secondary : Color.red)
-                                .monospacedDigit()
-                        } else {
-                            Text(duration > 0 ? duration.formattedDuration : "—")
-                                .foregroundStyle(duration > 0 ? Color.primary : Color.red)
-                                .monospacedDigit()
-                        }
+                        Text(duration > 0 ? duration.formattedDuration : "—")
+                            .foregroundStyle(duration > 0 ? Color.primary : Color.red)
+                            .monospacedDigit()
                     }
                 }
 
@@ -199,7 +222,7 @@ struct AddBlockSheet: View {
                 startTime: startTime
             ),
             newStart: startTime,
-            newEnd: resolvedEndTime
+            newEnd: endTime
         )
     }
 
@@ -213,7 +236,7 @@ struct AddBlockSheet: View {
             activitySetID: activity.sets.first(where: { $0.isActive })?.id,
             startTime: startTime
         )
-        block.endTime   = resolvedEndTime
+        block.endTime   = endTime
         block.stopState = "stopped"
         modelContext.insert(block)
 

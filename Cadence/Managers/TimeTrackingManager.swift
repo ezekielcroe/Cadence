@@ -346,16 +346,16 @@ class TimeTrackingManager: ObservableObject {
             sortBy: [SortDescriptor(\.startTime, order: .reverse)]
         )
 
-        guard let activeBlock = try? modelContext.fetch(descriptor).first else { return }
+        guard let activeBlock = try? modelContext.fetch(descriptor).first else {
+            cancelBackgroundReminder()
+            return
+        }
         currentTimeBlock = activeBlock
 
-        // If backgrounded while active or paused, check timeouts
-        // AFTER
         if let backgroundTime = backgroundEnteredTime {
             if activeBlock.isPaused {
                 let totalPauseElapsed = Date().timeIntervalSince(activeBlock.pauseStartTime ?? backgroundTime)
                 if totalPauseElapsed > maxPauseDuration {
-                    // autostopDueToPauseTimeout handles its own saveAndInvalidate
                     autostopDueToPauseTimeout(current: activeBlock)
                 }
             } else {
@@ -367,9 +367,9 @@ class TimeTrackingManager: ObservableObject {
                 }
             }
             clearBackgroundState()
-            // No trailing saveContext() needed: each branch above handles its own persistence,
-            // and the no-timeout paths have no SwiftData mutations to commit.
         }
+        
+        cancelBackgroundReminder()
     }
 
     // MARK: - Time Block Rule Application
