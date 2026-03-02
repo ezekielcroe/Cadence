@@ -17,7 +17,7 @@ struct FullEditSheet: View {
     let onSave: () -> Void
 
     @Query private var activities: [Activity]
-    @Query private var allRemarks: [Remark]
+    @Query private var blockRemarks: [Remark]
 
     // Inline new-remark state
     @State private var newRemarkText = ""
@@ -25,12 +25,17 @@ struct FullEditSheet: View {
 
     // UI state
     @State private var showingSplitSheet = false
+    
+    init(block: TimeBlock, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
+        self.block = block
+        self.conflictDetector = conflictDetector
+        self.onSave = onSave
 
-    // Remarks for this block
-    private var blockRemarks: [Remark] {
-        allRemarks
-            .filter { $0.timeBlockID == block.id }
-            .sorted { $0.timestamp < $1.timestamp }
+        let blockID = block.id
+        _blockRemarks = Query(
+            filter: #Predicate<Remark> { $0.timeBlockID == blockID },
+            sort: \.timestamp
+        )
     }
 
     // MARK: - Body

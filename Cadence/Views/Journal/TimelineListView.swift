@@ -99,6 +99,13 @@ struct TimelineListView: View {
             order: .reverse
         )
 
+        _remarks = Query(
+            filter: #Predicate<Remark> {
+                $0.timestamp >= startDate && $0.timestamp < endDate
+            },
+            sort: \.timestamp
+        )
+
         _dayNotes = Query(
             filter: #Predicate { $0.date >= startDate && $0.date < endDate },
             sort: \.date, order: .reverse

@@ -257,10 +257,15 @@ class DataArchiveManager {
         let count = blocksToDelete.count
 
         // Delete associated remarks
-        let remarkDescriptor = FetchDescriptor<Remark>()
-        let remarks = try modelContext.fetch(remarkDescriptor)
-        for remark in remarks where blockIDs.contains(remark.timeBlockID) {
-            modelContext.delete(remark)
+        for blockID in blockIDs {
+            let descriptor = FetchDescriptor<Remark>(
+                predicate: #Predicate<Remark> { $0.timeBlockID == blockID }
+            )
+            if let remarks = try? modelContext.fetch(descriptor) {
+                for remark in remarks {
+                    modelContext.delete(remark)
+                }
+            }
         }
 
         // Delete day notes in range

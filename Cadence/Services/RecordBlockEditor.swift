@@ -51,12 +51,16 @@ class TimeBlockEditor {
         mergedBlock.pauseCount             = sorted.reduce(0) { $0 + $1.pauseCount }
         mergedBlock.switchCount            = sorted.reduce(0) { $0 + $1.switchCount }
 
-        // Re-point all Remark records from source blocks to the new merged block
-        let sourceIDs = sorted.map { $0.id }
-        let remarkDescriptor = FetchDescriptor<Remark>()
-        if let allRemarks = try? modelContext.fetch(remarkDescriptor) {
-            for remark in allRemarks where sourceIDs.contains(remark.timeBlockID) {
-                remark.timeBlockID = mergedBlock.id
+        // Re-point all Remark records from source blocks to the new merged block.
+        // Fetch per source block — avoids loading the entire Remark table.
+        for sourceID in sorted.map({ $0.id }) {
+            let descriptor = FetchDescriptor<Remark>(
+                predicate: #Predicate<Remark> { $0.timeBlockID == sourceID }
+            )
+            if let remarks = try? modelContext.fetch(descriptor) {
+                for remark in remarks {
+                    remark.timeBlockID = mergedBlock.id
+                }
             }
         }
 
@@ -90,10 +94,14 @@ class TimeBlockEditor {
         secondBlock.endTime   = endTime
         secondBlock.stopState = block.stopState
 
-        // Remarks stay on the first half — re-point them
-        let remarkDescriptor = FetchDescriptor<Remark>()
-        if let allRemarks = try? modelContext.fetch(remarkDescriptor) {
-            for remark in allRemarks where remark.timeBlockID == block.id {
+        // Remarks stay on the first half — re-point them.
+        // Fetch only remarks for this specific block.
+        let blockID = block.id
+        let remarkDescriptor = FetchDescriptor<Remark>(
+            predicate: #Predicate<Remark> { $0.timeBlockID == blockID }
+        )
+        if let blockRemarks = try? modelContext.fetch(remarkDescriptor) {
+            for remark in blockRemarks {
                 remark.timeBlockID = firstBlock.id
             }
         }

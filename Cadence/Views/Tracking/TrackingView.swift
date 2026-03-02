@@ -255,16 +255,19 @@ struct IntentionSheet: View {
 struct QuickRemarkSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @Query private var allRemarks: [Remark]
+    @Query private var blockRemarks: [Remark]
 
     @Bindable var timeBlock: TimeBlock
     @State private var newRemark = ""
     @FocusState private var isTextFieldFocused: Bool
 
-    private var blockRemarks: [Remark] {
-        allRemarks
-            .filter { $0.timeBlockID == timeBlock.id }
-            .sorted { $0.timestamp < $1.timestamp }
+    init(timeBlock: TimeBlock) {
+        self.timeBlock = timeBlock
+        let blockID = timeBlock.id
+        _blockRemarks = Query(
+            filter: #Predicate<Remark> { $0.timeBlockID == blockID },
+            sort: \.timestamp
+        )
     }
 
     var body: some View {

@@ -362,7 +362,7 @@ struct TimerDisplaySettingsView: View {
             } header: {
                 Text("Display")
             } footer: {
-                Text("Prevents auto-lock while an activity is being tracked. The screen dims normally but won't turn off. Automatically re-enables when you stop tracking.")
+                Text("Prevents auto-lock while an activity is being tracked. Automatically re-enables when you stop tracking.")
             }
 
             if keepScreenOn {

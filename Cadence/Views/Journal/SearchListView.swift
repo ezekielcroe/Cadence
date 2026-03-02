@@ -12,38 +12,45 @@ import SwiftData
 struct SearchListView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    
-    // We use a raw query here so we can dynamically change the predicate
+
     @Query private var matches: [Remark]
-    
-    // We also need blocks to show context (activity color/name)
-    // Optimization: We fetch blocks only for the displayed remarks
-    @Query private var blocks: [TimeBlock]
-    
+
+    // Block cache — populated lazily from the matched remark set.
+    @State private var blockCache: [UUID: TimeBlock] = [:]
+
     private let searchText: String
-    
+
     init(searchText: String) {
         self.searchText = searchText
-        
-        // DYNAMIC PREDICATE: This runs on the database, not in memory.
-        // It finds remarks where the text OR the tags match.
+
         _matches = Query(
             filter: #Predicate {
-                $0.text.localizedStandardContains(searchText) // Case-insensitive, diacritic-insensitive
+                $0.text.localizedStandardContains(searchText)
             },
             sort: \.timestamp,
             order: .reverse
         )
-        
-        // We fetch all blocks to resolve relationships. 
-        // In a true large-scale app, we would fetch these lazily by ID,
-        // but SwiftData handles caching well enough for this lookup pattern.
-        _blocks = Query()
     }
-    
-    // Helper to resolve block details
+
     private func block(for remark: Remark) -> TimeBlock? {
-        blocks.first { $0.id == remark.timeBlockID }
+        blockCache[remark.timeBlockID]
+    }
+
+    // Build a cache of only the blocks we actually need to display.
+    private func populateBlockCache() {
+        let neededIDs = Set(matches.map { $0.timeBlockID })
+            .subtracting(blockCache.keys)
+
+        guard !neededIDs.isEmpty else { return }
+
+        for id in neededIDs {
+            let descriptor = FetchDescriptor<TimeBlock>(
+                predicate: #Predicate<TimeBlock> { $0.id == id }
+            )
+            if let block = try? modelContext.fetch(descriptor).first {
+                blockCache[id] = block
+            }
+        }
     }
     
     var body: some View {
@@ -111,6 +118,8 @@ struct SearchListView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Search")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { populateBlockCache() }
+        .onChange(of: matches.count) { _, _ in populateBlockCache() }
     }
     
     // Optional: Highlight the search term in results

@@ -57,9 +57,9 @@ struct RemarksTimelineView: View {
     @Query(sort: \DayNote.date, order: .reverse) private var allNotes: [DayNote]
     @Query private var allBlocks: [TimeBlock]
 
-    private var allTags: [String] {
-        Array(Set(allRemarks.flatMap { $0.tags })).sorted()
-    }
+    @State private var cachedTags: [String] = []
+
+    private var allTags: [String] { cachedTags }
 
     private var isViewingCurrentMonth: Bool {
         Calendar.current.isDate(currentMonth, equalTo: Date(), toGranularity: .month)
@@ -180,6 +180,11 @@ struct RemarksTimelineView: View {
                 .cornerRadius(14)
         }
         .buttonStyle(.plain)
+    }
+    
+    private func recomputeTags() {
+        let tags = Array(Set(allRemarks.flatMap { $0.tags })).sorted()
+        if tags != cachedTags { cachedTags = tags }
     }
 
     // MARK: - Data Pipeline

@@ -66,9 +66,9 @@ struct RecordsView: View {
     @Query private var allActivities: [Activity]
     @Query private var allRemarks: [Remark]
 
-    private var allTags: [String] {
-        Array(Set(allRemarks.flatMap { $0.tags })).sorted()
-    }
+    @State private var cachedTags: [String] = []
+
+    private var allTags: [String] { cachedTags }
 
     private var allActivityNames: [String] {
         allActivities.map { $0.name }.sorted()
@@ -448,6 +448,11 @@ struct RecordsView: View {
         try? editor.mergeBlocks(blocksToMerge, intoActivity: targetActivity)
         isSelectionMode = false
         selectedBlockIDs.removeAll()
+    }
+    
+    private func recomputeTags() {
+            let tags = Array(Set(allRemarks.flatMap { $0.tags })).sorted()
+            if tags != cachedTags { cachedTags = tags }
     }
 }
 

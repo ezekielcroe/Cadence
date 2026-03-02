@@ -15,7 +15,7 @@ struct QuickEditSheet: View {
 
     @Query private var activities: [Activity]
     @Query private var activitySets: [ActivitySet]
-    @Query private var allRemarks: [Remark]
+    @Query private var blockRemarks: [Remark]
 
     // Edit state
     @State private var editedStartTime: Date
@@ -29,19 +29,19 @@ struct QuickEditSheet: View {
     @State private var showingActivityPicker = false
 
     // Remarks for this block
-    private var blockRemarks: [Remark] {
-        allRemarks
-            .filter { $0.timeBlockID == block.id }
-            .sorted { $0.timestamp < $1.timestamp }
-    }
-
     init(block: TimeBlock, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
-        self.block = block
+        self.block            = block
         self.conflictDetector = conflictDetector
-        self.onSave = onSave
+        self.onSave           = onSave
         _editedStartTime  = State(initialValue: block.startTime)
         _editedEndTime    = State(initialValue: block.endTime ?? Date())
         _editedActivityID = State(initialValue: block.activityID)
+
+        let blockID = block.id
+        _blockRemarks = Query(
+            filter: #Predicate<Remark> { $0.timeBlockID == blockID },
+            sort: \.timestamp
+        )
     }
 
     // MARK: - Computed

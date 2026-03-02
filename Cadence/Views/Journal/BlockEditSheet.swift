@@ -16,7 +16,7 @@ struct BlockEditSheet: View {
 
     @Query private var activities: [Activity]
     @Query private var activitySets: [ActivitySet]
-    @Query private var allRemarks: [Remark]   // filtered in computed prop below
+    @Query private var blockRemarks: [Remark]
 
     // Edit state
     @State private var editedStartTime: Date
@@ -34,12 +34,6 @@ struct BlockEditSheet: View {
     @State private var showingActivityPicker = false
 
     // Remarks for this block only
-    private var blockRemarks: [Remark] {
-        allRemarks
-            .filter { $0.timeBlockID == block.id }
-            .sorted { $0.timestamp < $1.timestamp }
-    }
-
     init(block: TimeBlock, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
         self.block            = block
         self.conflictDetector = conflictDetector
@@ -47,6 +41,12 @@ struct BlockEditSheet: View {
         _editedStartTime  = State(initialValue: block.startTime)
         _editedEndTime    = State(initialValue: block.endTime ?? Date())
         _editedActivityID = State(initialValue: block.activityID)
+
+        let blockID = block.id
+        _blockRemarks = Query(
+            filter: #Predicate<Remark> { $0.timeBlockID == blockID },
+            sort: \.timestamp
+        )
     }
 
     // MARK: - Computed

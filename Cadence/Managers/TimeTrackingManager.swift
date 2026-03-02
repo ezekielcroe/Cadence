@@ -328,7 +328,19 @@ class TimeTrackingManager: ObservableObject {
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.objectWillChange.send()
+
+                // Only force a UI refresh when there's an active block whose
+                // elapsed time is visibly ticking. Paused blocks and idle state
+                // don't need per-second redraws.
+                let isActivelyTracking = self.currentTimeBlock != nil
+                    && self.currentTimeBlock?.endTime == nil
+
+                if isActivelyTracking {
+                    self.objectWillChange.send()
+                }
+
+                // These checks still run every tick — they are cheap guards
+                // that bail out immediately when there's nothing to do.
                 self.checkPauseTimeout()
                 self.checkAndApplyCurrentTimeBlockRule()
                 self.checkTargetDuration()

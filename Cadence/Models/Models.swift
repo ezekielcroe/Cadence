@@ -68,10 +68,10 @@ enum TrackingMode: String, Codable, CaseIterable {
 @Model
 final class Remark {
     var id:          UUID
-    var timeBlockID: UUID       // plain UUID — not a relationship, safe to reassign on merge/split
+    var timeBlockID: UUID
     var timestamp:   Date
     var text:        String
-    var tags:        [String]   // extracted at init from #hashtags
+    var tags:        [String]
 
     init(timeBlockID: UUID, text: String, timestamp: Date = Date()) {
         self.id          = UUID()
@@ -237,8 +237,14 @@ final class TimeBlockRule {
         return e < s ? (n >= s || n < e) : (n >= s && n < e)
     }
 
+    private static let shortTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        return f
+    }()
+
     var timeRangeDisplay: String {
-        let f = DateFormatter(); f.timeStyle = .short
+        let f = Self.shortTimeFormatter
         return "\(f.string(from: startTime)) – \(f.string(from: endTime))"
     }
 
