@@ -352,6 +352,10 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Background Tracking
 
+    /// Background task identifier — lets us request extra seconds from iOS
+    /// to finish saving state before the app is suspended.
+    private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
+
     private func setupBackgroundTracking() {
         NotificationCenter.default.addObserver(
             self,
@@ -365,20 +369,56 @@ class TimeTrackingManager: ObservableObject {
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
+        // Last-chance save before iOS terminates the app.
+        // Not guaranteed to fire, but covers graceful termination.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appWillTerminate),
+            name: UIApplication.willTerminateNotification,
+            object: nil
+        )
     }
 
     @objc private func appDidEnterBackground() {
         guard let current = currentTimeBlock, current.endTime == nil else { return }
+
+        // Request extra time from iOS to finish saving (~5-30 seconds).
+        // Without this, iOS can suspend us before saves complete.
+        backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "SaveTrackingState") {
+            // Expiration handler — clean up if we run out of time
+            self.endBackgroundTask()
+        }
+
         backgroundEnteredTime = Date()
         saveBackgroundState()
+
+        // CRITICAL: Save the SwiftData context so the TimeBlock's current state
+        // (pause state, duration, etc.) survives app termination.
+        saveContext()
+
         if !current.isPaused {
             scheduleBackgroundReminder()
         }
+
+        endBackgroundTask()
+    }
+
+    @objc private func appWillTerminate() {
+        // Last-chance: persist everything we can
+        saveBackgroundState()
+        saveContext()
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTaskID != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTaskID)
+        backgroundTaskID = .invalid
     }
 
     @objc private func appWillEnterForeground() {
         defer {
             backgroundEnteredTime = nil
+            clearBackgroundState()
             cancelBackgroundReminder()
         }
 
@@ -421,6 +461,9 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Session Recovery
 
+    /// Called on init (cold launch). Finds any active TimeBlock and reconciles
+    /// elapsed time — handles background timeout, pause timeout, AND target
+    /// duration expiry that may have occurred while the app was terminated.
     private func resumeActiveTimeBlock() {
         let descriptor = FetchDescriptor<TimeBlock>(
             predicate: #Predicate { $0.endTime == nil },
@@ -438,6 +481,9 @@ class TimeTrackingManager: ObservableObject {
                 let totalPauseElapsed = Date().timeIntervalSince(activeBlock.pauseStartTime ?? backgroundTime)
                 if totalPauseElapsed > maxPauseDuration {
                     autostopDueToPauseTimeout(current: activeBlock)
+                    clearBackgroundState()
+                    cancelBackgroundReminder()
+                    return
                 }
             } else {
                 let elapsed = Date().timeIntervalSince(backgroundTime)
@@ -445,9 +491,35 @@ class TimeTrackingManager: ObservableObject {
                     handleBackgroundTimeout(current: activeBlock, backgroundTime: backgroundTime)
                     let cappedEnd = backgroundTime.addingTimeInterval(maxBackgroundDuration)
                     saveAndInvalidate(date: cappedEnd)
+                    clearBackgroundState()
+                    cancelBackgroundReminder()
+                    return
                 }
             }
             clearBackgroundState()
+        }
+
+        // Check if the target duration was exceeded while the app was dead.
+        // The UNNotification may have fired, but the block was never auto-stopped
+        // because checkTargetDuration() only runs on the 1-second Timer tick.
+        if let target = activeBlock.targetDuration,
+           !activeBlock.isPaused,
+           activeBlock.duration >= target {
+            activeBlock.targetDuration = nil
+            activeBlock.endTime = activeBlock.startTime.addingTimeInterval(
+                target + activeBlock.totalPauseDuration
+            )
+            activeBlock.stopState = "stopped"
+            currentTimeBlock = nil
+            saveAndInvalidate(date: activeBlock.endTime ?? Date())
+            cancelTargetAlarm()
+            updateIdleTimerState()
+            scheduleInactivityReminder()
+
+            // Notify user that their timer completed while they were away
+            notifyTimerCompletedWhileAway(activityName: activeBlock.activityName)
+            cancelBackgroundReminder()
+            return
         }
 
         cancelBackgroundReminder()
@@ -585,6 +657,20 @@ class TimeTrackingManager: ObservableObject {
         content.body = "\(ruleName): Switched to \(setName)"
         let request = UNNotificationRequest(
             identifier: "setSwitch",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    private func notifyTimerCompletedWhileAway(activityName: String) {
+        guard notificationsEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "Timer Completed"
+        content.body = "Your \(activityName) session ended while the app was closed."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "timerCompletedWhileAway",
             content: content,
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
         )

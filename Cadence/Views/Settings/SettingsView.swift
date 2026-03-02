@@ -40,7 +40,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Activities")
                 } footer: {
-                    Text("Manage your activity sets and the activities within each set.")
+                    Text("Create activity sets (e.g. Work, Personal) and assign activities to each. Activities can belong to multiple sets and carry a goal direction (Keep High, Keep Low, Neutral).")
                 }
 
                 // MARK: - General
@@ -59,7 +59,7 @@ struct SettingsView: View {
                 } header: {
                     Text("General")
                 }
-                
+
                 // MARK: - Journal
                 Section {
                     NavigationLink {
@@ -70,7 +70,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Journal")
                 } footer: {
-                    Text("Configure daily intention and reflection reminders.")
+                    Text("Set morning intention and evening reflection reminders. Intentions and reflections appear in your daily timeline alongside activity records.")
                 }
 
                 // MARK: - Tracking Behavior
@@ -90,7 +90,7 @@ struct SettingsView: View {
                     NavigationLink {
                         TimerDisplaySettingsView()
                     } label: {
-                        Label("Timer Display", systemImage: "timer")
+                        Label("Timer & Display", systemImage: "timer")
                     }
 
                     NavigationLink {
@@ -101,7 +101,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Tracking Behavior")
                 } footer: {
-                    Text("Configure how Cadence records time when you switch contexts or leave the app.")
+                    Text("Controls how Cadence tracks time in the background, when to auto-stop, timer alerts, and notification preferences including inactivity reminders.")
                 }
 
                 // MARK: - Data & Storage
@@ -114,7 +114,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Data & Storage")
                 } footer: {
-                    Text("Export CSVs, create backups, or archive old records.")
+                    Text("Export your activity history and remarks as CSV, create backups, or archive old records.")
                 }
 
                 // MARK: - About
@@ -122,26 +122,99 @@ struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0 (Phase 1)")
+                        Text("1.0.0")
                             .foregroundStyle(.secondary)
                     }
 
                     DisclosureGroup {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text("Time Blocks can automatically switch your Activity Set (e.g., to 'Work') and control tracking behavior.")
-                            Text("Use 'Tracking On' to enforce accountability (gaps are tracked). Use 'Paused' for sleep to ignore gaps.")
-                            Text("The 'Default Mode' applies whenever you are outside of these specific Time Blocks.")
+                        VStack(alignment: .leading, spacing: 16) {
+                            tipRow(
+                                icon: "play.circle.fill",
+                                tint: .green,
+                                title: "Quick Start",
+                                body: "Tap any activity on the Tracking tab to start the clock. Tap a different activity to switch seamlessly — the previous one is saved automatically."
+                            )
+
+                            tipRow(
+                                icon: "timer",
+                                tint: .orange,
+                                title: "Session Timer",
+                                body: "Set a target duration for any session using the bell icon. You'll get an alert (with sound and haptics) when time's up, even if the app is backgrounded."
+                            )
+
+                            tipRow(
+                                icon: "note.text",
+                                tint: .blue,
+                                title: "Remarks & Tags",
+                                body: "Add timestamped notes to any activity via Quick Remark. Use #hashtags to tag and categorize — then search and filter across all your remarks in the Search tab."
+                            )
+
+                            tipRow(
+                                icon: "sun.horizon.fill",
+                                tint: .orange,
+                                title: "Intentions & Reflections",
+                                body: "Set a daily intention each morning and write a reflection each evening. These bookend your day in the Records timeline and help you stay aligned."
+                            )
+
+                            tipRow(
+                                icon: "square.grid.2x2.fill",
+                                tint: .purple,
+                                title: "Activity Sets & Schedules",
+                                body: "Organize activities into sets (Work, Personal, etc.). Create schedules to auto-switch the active set on a timetable — Cadence will switch context for you."
+                            )
+
+                            tipRow(
+                                icon: "pencil.and.list.clipboard",
+                                tint: .teal,
+                                title: "Edit Records",
+                                body: "Tap any block in Records to quick-edit its time or activity. Open the full editor to add remarks, view pause history, or split blocks. Adjacent blocks can be merged."
+                            )
+
+                            tipRow(
+                                icon: "moon.fill",
+                                tint: .indigo,
+                                title: "Background Tracking",
+                                body: "When you leave the app, your current activity keeps tracking. If you're away too long, Cadence auto-stops at your configured limit. State is saved so nothing is lost, even if iOS terminates the app."
+                            )
+
+                            tipRow(
+                                icon: "bell.badge.fill",
+                                tint: .red,
+                                title: "Inactivity Reminder",
+                                body: "Enable a nudge if you forget to log. Cadence will notify you after a configurable period of no activity, so you can pick up where you left off."
+                            )
                         }
-                        .font(.caption)
                         .padding(.vertical, 4)
                     } label: {
-                        Label("Quick Tips", systemImage: "lightbulb.fill")
+                        Label("Feature Guide", systemImage: "lightbulb.fill")
                     }
                 } header: {
                     Text("About")
                 }
             }
             .navigationTitle("Settings")
+        }
+    }
+
+    // MARK: - Tip Row Helper
+
+    private func tipRow(icon: String, tint: Color, title: String, body: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+                .font(.body)
+                .frame(width: 24, alignment: .center)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                Text(body)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
@@ -154,7 +227,7 @@ struct DefaultTrackingModeView: View {
     var body: some View {
         Form {
             Section {
-                Text("Controls whether the app tracks activities and creates gaps by default.")
+                Text("Controls whether Cadence actively tracks time and creates gaps for unlogged periods. When off, the timer is paused and no gaps are recorded.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -169,7 +242,7 @@ struct DefaultTrackingModeView: View {
             } header: {
                 Text("Default Mode")
             } footer: {
-                Text("When enabled, the app will track activities and create gaps for untracked time. When disabled, the tracker is paused.")
+                Text("This applies when no scheduled time block rule is active. Scheduled rules can override this.")
             }
 
             Section {
@@ -184,7 +257,7 @@ struct DefaultTrackingModeView: View {
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Tracking On").fontWeight(.medium)
-                                Text("• Records all activities\n• Creates gaps when you stop\n• Auto-switches activity sets")
+                                Text("Records activities. Gaps between activities are shown in your timeline. Scheduled rules can auto-switch your active set.")
                                     .font(.caption)
                             }
                         }
@@ -195,7 +268,7 @@ struct DefaultTrackingModeView: View {
                                 .frame(width: 24)
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Tracking Off").fontWeight(.medium)
-                                Text("• Tracker is paused\n• No activities recorded\n• Use for sleep or downtime")
+                                Text("Timer is paused. No activities or gaps are recorded. Use for sleep, downtime, or when you don't want accountability pressure.")
                                     .font(.caption)
                             }
                         }
@@ -230,7 +303,7 @@ struct BackgroundTrackingView: View {
     var body: some View {
         Form {
             Section {
-                Text("When you background the app, the current activity continues tracking. Set a maximum duration after which the activity will automatically stop.")
+                Text("When you leave the app, your current activity keeps running. If you don't return within the limit below, Cadence will auto-stop the activity at that point.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -243,27 +316,26 @@ struct BackgroundTrackingView: View {
                 }
                 .pickerStyle(.inline)
             } header: {
-                Text("Auto-Stop Duration")
+                Text("Auto-Stop After")
             } footer: {
                 if maxBackgroundDuration == .infinity {
-                    Text("Activity will continue tracking indefinitely while in background")
+                    Text("Activity will track indefinitely — it won't auto-stop no matter how long you're away.")
                 } else {
-                    Text("Activity will stop after \(maxBackgroundDuration.formattedDuration) in background")
+                    Text("If you're away longer than \(maxBackgroundDuration.formattedDuration), the activity stops at that mark and the remaining time appears as a gap.")
                 }
             }
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("How Background Tracking Works", systemImage: "info.circle")
+                    Label("How It Works", systemImage: "info.circle")
                         .font(.headline)
 
-                    Text("• When you background the app, we record the timestamp")
-                    Text("• When you return, we calculate elapsed time and add it to your activity")
-                    Text("• This doesn't drain battery — no actual background processing happens")
-                    Text("• To switch activities, you must open the app")
+                    Text("Cadence records a timestamp when you leave and calculates elapsed time when you return. No background processing runs — this uses zero battery.")
+                    Text("If iOS terminates the app while it's in the background (which is normal), Cadence recovers the session on next launch using the saved timestamp.")
+                    Text("A reminder notification is sent 5 minutes before the auto-stop limit to give you a chance to return.")
 
                     if maxBackgroundDuration != .infinity {
-                        Text("\n• If you're away longer than \(maxBackgroundDuration.formattedDuration), the activity stops at that time")
+                        Text("Activity auto-stops after \(maxBackgroundDuration.formattedDuration) if you don't come back.")
                             .foregroundStyle(.orange)
                     }
                 }
@@ -278,7 +350,7 @@ struct BackgroundTrackingView: View {
     }
 }
 
-// MARK: - Timer Display Settings View (NEW)
+// MARK: - Timer & Display Settings View
 
 struct TimerDisplaySettingsView: View {
     @AppStorage("keepScreenOnWhileTracking") private var keepScreenOn = false
@@ -290,7 +362,7 @@ struct TimerDisplaySettingsView: View {
             } header: {
                 Text("Display")
             } footer: {
-                Text("Prevents the screen from auto-locking while an activity is being tracked. The screen will dim normally but won't turn off. This ensures the timer stays visible and in-app sounds play reliably. Uses more battery.")
+                Text("Prevents auto-lock while an activity is being tracked. The screen dims normally but won't turn off. Automatically re-enables when you stop tracking.")
             }
 
             if keepScreenOn {
@@ -302,7 +374,7 @@ struct TimerDisplaySettingsView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Battery Impact")
                                 .font(.subheadline).fontWeight(.medium)
-                            Text("Keeping the screen on will use more battery. Consider plugging in during long sessions.")
+                            Text("Keeping the screen on uses more battery. Consider plugging in during long sessions.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
@@ -312,13 +384,12 @@ struct TimerDisplaySettingsView: View {
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Label("Why Keep Screen On?", systemImage: "info.circle")
+                    Label("When To Use This", systemImage: "info.circle")
                         .font(.headline)
 
-                    Text("• Timer completion sounds play reliably")
-                    Text("• Countdown stays visible at a glance")
-                    Text("• No need to unlock to check progress")
-                    Text("• Screen turns off automatically when you stop tracking")
+                    Text("Enable this when you want to glance at the countdown without unlocking your phone, or to ensure the timer-completion sound plays reliably (it fires through the speaker when the app is in the foreground).")
+                    Text("If you're using a session timer (set via the bell icon on the tracking screen), keeping the screen on guarantees you'll hear the completion alert even with the phone sitting nearby.")
+                    Text("The screen turns off automatically when you stop tracking or when no activity is active.")
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -326,12 +397,12 @@ struct TimerDisplaySettingsView: View {
                 Text("About")
             }
         }
-        .navigationTitle("Timer Display")
+        .navigationTitle("Timer & Display")
         .navigationBarTitleDisplayMode(.inline)
     }
 }
 
-// MARK: - Notification Settings View (UPDATED)
+// MARK: - Notification Settings View
 
 struct NotificationSettingsView: View {
     @AppStorage("notificationsEnabled") private var notificationsEnabled = true
@@ -351,7 +422,7 @@ struct NotificationSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("Get notified when activities stop in background and when activity sets change automatically.")
+                Text("Cadence can notify you about timer completions, background activity changes, and more.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -367,28 +438,31 @@ struct NotificationSettingsView: View {
 
             if notificationsEnabled {
                 Section {
-                    HStack {
-                        Image(systemName: "bell.badge").foregroundStyle(.orange)
-                        Text("You'll receive reminders before activities stop in background")
-                            .font(.caption)
-                    }
-
-                    HStack {
-                        Image(systemName: "arrow.triangle.swap").foregroundStyle(.blue)
-                        Text("You'll be notified when activity sets change automatically")
-                            .font(.caption)
-                    }
-
-                    HStack {
-                        Image(systemName: "timer").foregroundStyle(.red)
-                        Text("Timer completion alerts play even when the app is backgrounded")
-                            .font(.caption)
-                    }
+                    notificationRow(
+                        icon: "timer",
+                        tint: .red,
+                        text: "Session timer completion — plays an alert sound and vibrates when your target duration is reached."
+                    )
+                    notificationRow(
+                        icon: "bell.badge",
+                        tint: .orange,
+                        text: "Background warning — notifies you 5 minutes before Cadence auto-stops your activity."
+                    )
+                    notificationRow(
+                        icon: "stop.circle",
+                        tint: .secondary,
+                        text: "Activity stopped — confirms when an activity is auto-stopped due to background timeout or pause timeout."
+                    )
+                    notificationRow(
+                        icon: "arrow.triangle.swap",
+                        tint: .blue,
+                        text: "Set auto-switch — tells you when a scheduled rule changes your active activity set."
+                    )
                 } header: {
-                    Text("Active Notifications")
+                    Text("What You'll Receive")
                 }
 
-                // MARK: Inactivity Reminder (NEW)
+                // MARK: Inactivity Reminder
                 Section {
                     Toggle("Inactivity Reminder", isOn: $inactivityEnabled)
 
@@ -403,9 +477,9 @@ struct NotificationSettingsView: View {
                     Text("Inactivity Reminder")
                 } footer: {
                     if inactivityEnabled {
-                        Text("You'll be reminded if you haven't started a new activity within \(inactivityInterval.formattedDuration) of stopping the last one.")
+                        Text("If you stop tracking and don't start a new activity within \(inactivityInterval.formattedDuration), you'll get a nudge to log what you're doing.")
                     } else {
-                        Text("Get a nudge when you forget to log activities for a while.")
+                        Text("Get a reminder when you haven't logged any activity for a while. Helpful if you tend to forget to track.")
                     }
                 }
             }
@@ -421,9 +495,25 @@ struct NotificationSettingsView: View {
             }
             Button("Cancel", role: .cancel) { notificationsEnabled = false }
         } message: {
-            Text("Please enable notifications in Settings to receive activity reminders")
+            Text("Please enable notifications in Settings to receive activity reminders and timer alerts.")
         }
     }
+
+    // MARK: - Notification Row Helper
+
+    private func notificationRow(icon: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(tint)
+                .font(.caption)
+                .frame(width: 20, alignment: .center)
+                .padding(.top, 2)
+            Text(text)
+                .font(.caption)
+        }
+    }
+
+    // MARK: - Permission Handling
 
     private func checkAndRequestNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
@@ -470,7 +560,7 @@ struct InterfaceSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("Customize how the app responds to your interactions.")
+                Text("Customize how the app feels when you interact with it.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -497,7 +587,7 @@ struct InterfaceSettingsView: View {
             } header: {
                 Text("Haptic Feedback")
             } footer: {
-                Text("Feel physical feedback when tapping activity buttons and control buttons")
+                Text("Haptics fire when you tap activity buttons, start/stop tracking, and when a timer completes.")
             }
         }
         .navigationTitle("Interface")

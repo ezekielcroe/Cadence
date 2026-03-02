@@ -2,8 +2,6 @@
 //  ReportsView.swift
 //  Cadence
 //
-//  Created by Zhi Zheng Yeo on 29/1/26.
-//
 
 import SwiftUI
 import SwiftData
@@ -13,7 +11,7 @@ struct ReportsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allTimeBlocks: [TimeBlock]
     @Query private var activities: [Activity]
-    @Query private var allRemarks: [Remark]   // NEW: passed to generator
+    @Query private var allRemarks: [Remark]
 
     @State private var selectedPeriod: ReportGenerator.ReportPeriod = .week
     @State private var report: ReportGenerator.Report?
@@ -68,24 +66,24 @@ struct ReportsView: View {
 
     @ViewBuilder
     private func reportContent(_ report: ReportGenerator.Report) -> some View {
-        // Summary cards
+        // Summary cards — FIX: use totalDuration directly, clamp unaccounted
         HStack(spacing: 12) {
             SummaryCard(
                 title: "Tracked",
-                value: (report.totalDuration - report.unaccountedDuration).formattedDuration,
+                value: report.totalDuration.formattedDuration,
                 icon:  "clock.badge.checkmark.fill",
                 color: .blue
             )
             SummaryCard(
                 title: "Unaccounted",
-                value: report.unaccountedDuration.formattedDuration,
+                value: max(0, report.unaccountedDuration).formattedDuration,
                 icon:  "questionmark.circle",
                 color: .orange
             )
         }
         .padding(.horizontal)
 
-        // Fragmentation card (NEW)
+        // Fragmentation card
         FragmentationCard(fragmentation: report.fragmentation)
             .padding(.horizontal)
 
@@ -95,28 +93,26 @@ struct ReportsView: View {
                 .padding(.horizontal)
         }
 
-        // Activity Breakdown Chart
+        // Activity Breakdown — REDESIGNED: rich rows with progress bars
         if !report.activityBreakdown.isEmpty {
-            BreakdownChart(report: report)
+            ActivityBreakdownCard(report: report)
                 .padding(.horizontal)
         }
 
-        // Top Activities
-        if !report.topActivities.isEmpty {
-            TopActivitiesCard(report: report)
-                .padding(.horizontal)
-        }
-
-        // Tag Breakdown (NEW)
+        // Tag Breakdown
         if !report.tagBreakdown.isEmpty {
             TagBreakdownCard(tags: report.tagBreakdown)
                 .padding(.horizontal)
         }
 
-        // Highlights (NEW)
-        if !report.highlights.isEmpty {
-            HighlightsCard(highlights: report.highlights, period: report.period)
-                .padding(.horizontal)
+        // Remarks Explorer — REDESIGNED: filterable by activity + tag
+        let periodRemarks = remarksForPeriod(report.period)
+        if !periodRemarks.isEmpty {
+            RemarksExplorerCard(
+                remarks: periodRemarks,
+                blocks: blocksForPeriod(report.period)
+            )
+            .padding(.horizontal)
         }
     }
 
@@ -132,13 +128,355 @@ struct ReportsView: View {
     }
 
     private func shareReport() {
-        guard let report = report else { return }
+        guard report != nil else { return }
         showingShareSheet = true
-        _ = reportGenerator.formatReportAsText(report)
+    }
+
+    // MARK: - Period helpers
+
+    private func blocksForPeriod(_ period: ReportGenerator.ReportPeriod) -> [TimeBlock] {
+        let (start, end) = periodRange(period)
+        return allTimeBlocks.filter { $0.startTime >= start && $0.startTime < end }
+    }
+
+    private func remarksForPeriod(_ period: ReportGenerator.ReportPeriod) -> [Remark] {
+        let blocks = blocksForPeriod(period)
+        let blockIDs = Set(blocks.map { $0.id })
+        return allRemarks
+            .filter { blockIDs.contains($0.timeBlockID) }
+            .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    private func periodRange(_ period: ReportGenerator.ReportPeriod) -> (Date, Date) {
+        let cal = Calendar.current
+        let now = Date()
+        let start: Date
+        switch period {
+        case .day:   start = cal.startOfDay(for: now.addingTimeInterval(-86400))
+        case .week:  start = cal.startOfDay(for: now.addingTimeInterval(-7 * 86400))
+        case .month: start = cal.startOfDay(for: now.addingTimeInterval(-30 * 86400))
+        }
+        return (start, now)
     }
 }
 
-// MARK: - Fragmentation Card (NEW)
+// MARK: - Activity Breakdown Card (REDESIGNED)
+
+struct ActivityBreakdownCard: View {
+    let report: ReportGenerator.Report
+
+    @State private var showAll = false
+
+    var body: some View {
+        let breakdown = report.activityBreakdown
+        let items = showAll ? Array(breakdown) : Array(breakdown.prefix(6))
+        let total = report.totalDuration
+
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Activity Breakdown", systemImage: "chart.bar.fill")
+                    .font(.headline)
+                Spacer()
+                Text("\(breakdown.count) activities")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Mini donut overview
+            if breakdown.count > 1 {
+                Chart(breakdown.prefix(8), id: \.name) { item in
+                    SectorMark(
+                        angle: .value("Duration", item.duration),
+                        innerRadius: .ratio(0.6),
+                        angularInset: 1.5
+                    )
+                    .foregroundStyle(Color(hex: item.color))
+                }
+                .chartLegend(.hidden)
+                .frame(height: 140)
+                .padding(.bottom, 4)
+            }
+
+            // Detailed rows
+            ForEach(items, id: \.name) { item in
+                let pct: Double = total > 0 ? item.duration / total : 0
+
+                VStack(spacing: 6) {
+                    HStack {
+                        Circle()
+                            .fill(Color(hex: item.color))
+                            .frame(width: 10, height: 10)
+                        Text(item.name)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(item.duration.formattedDuration)
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                        Text("(\(Int(pct * 100))%)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .frame(width: 40, alignment: .trailing)
+                    }
+
+                    // Progress bar
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule()
+                                .fill(Color(.systemGray5))
+                                .frame(height: 6)
+                            Capsule()
+                                .fill(Color(hex: item.color))
+                                .frame(width: geo.size.width * CGFloat(pct), height: 6)
+                        }
+                    }
+                    .frame(height: 6)
+                }
+            }
+
+            if breakdown.count > 6 {
+                Button {
+                    withAnimation { showAll.toggle() }
+                } label: {
+                    Text(showAll ? "Show Less" : "Show All \(breakdown.count) Activities")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+}
+
+// MARK: - Remarks Explorer Card (NEW — replaces Highlights)
+
+struct RemarksExplorerCard: View {
+    let remarks: [Remark]
+    let blocks: [TimeBlock]
+
+    @State private var selectedActivity: String? = nil
+    @State private var selectedTag: String? = nil
+    @State private var showAll = false
+
+    private var blockLookup: [UUID: TimeBlock] {
+        var lookup: [UUID: TimeBlock] = [:]
+        for block in blocks { lookup[block.id] = block }
+        return lookup
+    }
+
+    private var availableActivities: [String] {
+        let names = Set(remarks.compactMap { blockLookup[$0.timeBlockID]?.activityName })
+        return names.sorted()
+    }
+
+    private var availableTags: [String] {
+        let tags = Set(remarks.flatMap { $0.tags })
+        return tags.sorted()
+    }
+
+    private var filteredRemarks: [Remark] {
+        remarks.filter { remark in
+            let matchesActivity: Bool = {
+                guard let activity = selectedActivity else { return true }
+                return blockLookup[remark.timeBlockID]?.activityName == activity
+            }()
+
+            let matchesTag: Bool = {
+                guard let tag = selectedTag else { return true }
+                return remark.tags.contains(tag)
+            }()
+
+            return matchesActivity && matchesTag
+        }
+    }
+
+    private var displayRemarks: [Remark] {
+        showAll ? filteredRemarks : Array(filteredRemarks.prefix(8))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+
+            // Header
+            HStack {
+                Label("Remarks", systemImage: "note.text")
+                    .font(.headline)
+                Spacer()
+                Text("\(filteredRemarks.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color(.systemGray5))
+                    .cornerRadius(8)
+            }
+
+            // Filter chips
+            VStack(alignment: .leading, spacing: 8) {
+                // Activity filter
+                if availableActivities.count > 1 {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            FilterChip(
+                                label: "All Activities",
+                                isSelected: selectedActivity == nil,
+                                color: .primary
+                            ) {
+                                withAnimation { selectedActivity = nil }
+                            }
+
+                            ForEach(availableActivities, id: \.self) { name in
+                                let color = blocks.first(where: { $0.activityName == name })
+                                    .map { Color(hex: $0.activityColor) } ?? .gray
+                                FilterChip(
+                                    label: name,
+                                    isSelected: selectedActivity == name,
+                                    color: color
+                                ) {
+                                    withAnimation {
+                                        selectedActivity = selectedActivity == name ? nil : name
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Tag filter
+                if !availableTags.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            FilterChip(
+                                label: "All Tags",
+                                isSelected: selectedTag == nil,
+                                color: .blue
+                            ) {
+                                withAnimation { selectedTag = nil }
+                            }
+
+                            ForEach(availableTags, id: \.self) { tag in
+                                FilterChip(
+                                    label: "#\(tag)",
+                                    isSelected: selectedTag == tag,
+                                    color: .blue
+                                ) {
+                                    withAnimation {
+                                        selectedTag = selectedTag == tag ? nil : tag
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Remark list
+            if filteredRemarks.isEmpty {
+                Text("No remarks match the selected filters.")
+                    .font(.subheadline)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+            } else {
+                ForEach(displayRemarks) { remark in
+                    remarkRow(remark)
+
+                    if remark.id != displayRemarks.last?.id {
+                        Divider().padding(.leading, 13)
+                    }
+                }
+
+                if filteredRemarks.count > 8 {
+                    Button {
+                        withAnimation { showAll.toggle() }
+                    } label: {
+                        Text(showAll ? "Show Less" : "Show All \(filteredRemarks.count) Remarks")
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(12)
+    }
+
+    // MARK: - Remark Row
+
+    @ViewBuilder
+    private func remarkRow(_ remark: Remark) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let block = blockLookup[remark.timeBlockID] {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color(hex: block.activityColor))
+                    .frame(width: 3)
+                    .frame(minHeight: 32)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    if let block = blockLookup[remark.timeBlockID] {
+                        Text(block.activityName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(remark.timestamp.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+
+                Text(remark.text)
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                if !remark.tags.isEmpty {
+                    TagChipRow(tags: remark.tags)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Filter Chip
+
+struct FilterChip: View {
+    let label: String
+    let isSelected: Bool
+    let color: Color
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.caption)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isSelected ? color.opacity(0.15) : Color(.systemGray5))
+                .foregroundStyle(isSelected ? color : .secondary)
+                .cornerRadius(16)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(isSelected ? color.opacity(0.4) : Color.clear, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Fragmentation Card
 
 struct FragmentationCard: View {
     let fragmentation: ReportGenerator.FragmentationData
@@ -191,7 +529,7 @@ struct FragmentationCard: View {
     }
 }
 
-// MARK: - Tag Breakdown Card (NEW)
+// MARK: - Tag Breakdown Card
 
 struct TagBreakdownCard: View {
     let tags: [ReportGenerator.TagStat]
@@ -241,67 +579,7 @@ struct TagBreakdownCard: View {
     }
 }
 
-// MARK: - Highlights Card (NEW)
-
-struct HighlightsCard: View {
-    let highlights: [ReportGenerator.RemarkHighlight]
-    let period: ReportGenerator.ReportPeriod
-
-    private var periodLabel: String {
-        switch period {
-        case .day:   return "Yesterday's Highlights"
-        case .week:  return "Week's Highlights"
-        case .month: return "Month's Highlights"
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label(periodLabel, systemImage: "sparkles")
-                .font(.headline)
-
-            ForEach(highlights) { highlight in
-                HStack(alignment: .top, spacing: 10) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(Color(hex: highlight.activityColor))
-                        .frame(width: 3)
-                        .frame(minHeight: 40)
-
-                    VStack(alignment: .leading, spacing: 5) {
-                        HStack {
-                            Text(highlight.activityName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(highlight.timestamp.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
-                        }
-
-                        Text(highlight.text)
-                            .font(.subheadline)
-                            .foregroundStyle(.primary)
-                            .fixedSize(horizontal: false, vertical: true)
-
-                        if !highlight.tags.isEmpty {
-                            TagChipRow(tags: highlight.tags)
-                        }
-                    }
-                }
-
-                if highlight.id != highlights.last?.id {
-                    Divider().padding(.leading, 13)
-                }
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-}
-
-// MARK: - Existing cards (preserved, unchanged) ──────────────────────────────
+// MARK: - Comparison Card (preserved)
 
 struct ComparisonCard: View {
     let comparison: ReportGenerator.Report.ComparisonData
@@ -371,48 +649,7 @@ struct ActivityChangeRow: View {
     }
 }
 
-struct TopActivitiesCard: View {
-    let report: ReportGenerator.Report
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Top Activities").font(.headline)
-            ForEach(Array(report.topActivities.enumerated()), id: \.offset) { index, item in
-                HStack {
-                    Text("\(index + 1)").font(.headline).foregroundStyle(.secondary).frame(width: 25)
-                    Text(item.name).font(.subheadline)
-                    Spacer()
-                    Text(item.duration.formattedDuration).font(.subheadline).monospacedDigit()
-                }
-                if index < report.topActivities.count - 1 { Divider() }
-            }
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-}
-
-struct BreakdownChart: View {
-    let report: ReportGenerator.Report
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Activity Breakdown").font(.headline)
-            Chart(report.activityBreakdown.prefix(8), id: \.name) { item in
-                BarMark(
-                    x: .value("Duration", item.duration),
-                    y: .value("Activity", item.name)
-                )
-                .foregroundStyle(Color(hex: item.color))
-            }
-            .frame(height: 250)
-        }
-        .padding()
-        .background(Color(.systemGray6))
-        .cornerRadius(12)
-    }
-}
+// MARK: - Summary Card (preserved)
 
 struct SummaryCard: View {
     let title: String
@@ -432,6 +669,8 @@ struct SummaryCard: View {
         .cornerRadius(12)
     }
 }
+
+// MARK: - Share Sheet (preserved)
 
 struct ShareSheet: UIViewControllerRepresentable {
     let text: String

@@ -345,14 +345,16 @@ final class TimeBlock {
 
 extension TimeInterval {
     var formattedDuration: String {
-        let h = Int(self)/3600, m = Int(self)/60%60, s = Int(self)%60
+        let clamped = max(0, self)
+        let h = Int(clamped)/3600, m = Int(clamped)/60%60, s = Int(clamped)%60
         if h > 0      { return String(format: "%dh %dm", h, m) }
         if m > 0      { return String(format: "%dm %ds", m, s) }
         return          String(format: "%ds", s)
     }
 
     var detailedFormattedDuration: String {
-        let h = Int(self)/3600, m = Int(self)/60%60, s = Int(self)%60
+        let clamped = max(0, self)
+        let h = Int(clamped)/3600, m = Int(clamped)/60%60, s = Int(clamped)%60
         return h > 0 ? String(format: "%dh %dm %ds", h, m, s) : String(format: "%dm %ds", m, s)
     }
 }
