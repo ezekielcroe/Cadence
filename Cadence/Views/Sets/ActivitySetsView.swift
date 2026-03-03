@@ -24,9 +24,14 @@ struct ActivitySetsView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(set.name).font(.body)
-                                Text("\(set.activities.count) activit\(set.activities.count == 1 ? "y" : "ies")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 6) {
+                                    Text("\(set.activities.count) activit\(set.activities.count == 1 ? "y" : "ies")")
+                                    Text("·")
+                                    Image(systemName: set.entryMode.icon)
+                                    Text(set.entryMode.displayName)
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                             }
                             Spacer()
                             if set.isActive {
@@ -66,7 +71,6 @@ struct ActivitySetsView: View {
 }
 
 // MARK: - ActivitySetDetailView
-// Moved here from SetsView.swift.
 
 struct ActivitySetDetailView: View {
     @Environment(\.modelContext) private var modelContext
@@ -100,6 +104,21 @@ struct ActivitySetDetailView: View {
                 ))
             } header: {
                 Text("Set Info")
+            }
+
+            // MARK: NEW - Entry Mode Picker
+            Section {
+                Picker("Entry Mode", selection: $activitySet.entryMode) {
+                    ForEach(EntryMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("Entry Mode")
+            } footer: {
+                Text(activitySet.entryMode.description)
             }
 
             Section {
@@ -163,8 +182,6 @@ struct ActivitySetDetailView: View {
 }
 
 // MARK: - AddToSetSheet
-// Moved here from SetsView.swift.
-// Shows all library activities NOT already in this set.
 
 struct AddToSetSheet: View {
     @Environment(\.modelContext) private var modelContext
@@ -237,32 +254,46 @@ struct AddToSetSheet: View {
 }
 
 // MARK: - AddActivitySetView
-// Moved here from SetsView.swift.
 
 struct AddActivitySetView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss)      private var dismiss
     @State private var name = ""
+    @State private var entryMode: EntryMode = .prospective
 
     var body: some View {
         NavigationStack {
-            Form { TextField("Set Name", text: $name) }
-                .navigationTitle("New Activity Set")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Cancel") { dismiss() }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Add") { addSet() }
-                            .disabled(name.isEmpty)
-                    }
+            Form {
+                Section {
+                    TextField("Set Name", text: $name)
                 }
+                
+                Section(header: Text("Entry Mode"), footer: Text(entryMode.description)) {
+                    Picker("Entry Mode", selection: $entryMode) {
+                        ForEach(EntryMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName)
+                                .tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+            }
+            .navigationTitle("New Activity Set")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { addSet() }
+                        .disabled(name.isEmpty)
+                }
+            }
         }
     }
 
     private func addSet() {
-        modelContext.insert(ActivitySet(name: name))
+        modelContext.insert(ActivitySet(name: name, entryMode: entryMode))
         try? modelContext.save()
         dismiss()
     }

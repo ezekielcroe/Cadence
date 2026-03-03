@@ -22,18 +22,45 @@ class TimeTrackingManager: ObservableObject {
     @Published var currentTimeBlock: TimeBlock?
     @Published var activeSet: ActivitySet?
     @Published var currentTimeBlockRule: TimeBlockRule?
+    
+    // MARK: Retrospective State
+    
+    /// In retrospective mode, this is the "zero point" — the start of unlabeled time.
+    @Published var retrospectiveAnchorTime: Date?
+    
+    /// Accumulated pause duration within the current unlabeled period.
+    @Published var retrospectivePauseDuration: TimeInterval = 0
+    
+    /// Pause state for retrospective mode
+    @Published var retrospectiveIsPaused: Bool = false
+    @Published var retrospectivePauseStart: Date?
 
     private var backgroundEnteredTime: Date?
     private(set) var maxBackgroundDuration: TimeInterval = 900   // 15 min default
 
-    /// Maximum pause duration before the activity is auto-stopped. (10 min)
-    private let maxPauseDuration: TimeInterval = 600
+    /// Maximum pause duration before the activity is auto-stopped. (15 min)
+    private let maxPauseDuration: TimeInterval = 900
 
     var notificationsEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: "notificationsEnabled") }
         set { UserDefaults.standard.set(newValue, forKey: "notificationsEnabled") }
     }
-
+    
+    /// The entry mode of the currently active set.
+    var currentEntryMode: EntryMode {
+        activeSet?.entryMode ?? .prospective
+    }
+    
+    /// Elapsed unlabeled time in retrospective mode.
+    var unlabeledDuration: TimeInterval {
+        guard let anchor = retrospectiveAnchorTime else { return 0 }
+        let raw = Date().timeIntervalSince(anchor)
+        let currentPause = retrospectiveIsPaused
+            ? Date().timeIntervalSince(retrospectivePauseStart ?? Date())
+            : 0
+        return max(0, raw - retrospectivePauseDuration - currentPause)
+    }
+    
     private var timer: Timer?
     private let historyManager = HistoryManager.shared
 
@@ -50,6 +77,7 @@ class TimeTrackingManager: ObservableObject {
         }
 
         loadSettings()
+        loadRetrospectiveState()
         resumeActiveTimeBlock()
         startTimer()
         setupBackgroundTracking()
@@ -87,11 +115,13 @@ class TimeTrackingManager: ObservableObject {
     // MARK: - Keep Screen On
 
     /// Call this whenever tracking state changes to update idle timer.
-    /// Reads the user preference and only keeps screen on when actively tracking.
     func updateIdleTimerState() {
         let keepScreenOn = UserDefaults.standard.bool(forKey: "keepScreenOnWhileTracking")
-        let isTracking = currentTimeBlock != nil && currentTimeBlock?.endTime == nil
-        UIApplication.shared.isIdleTimerDisabled = keepScreenOn && isTracking
+        
+        let isProspectiveTracking = currentTimeBlock != nil && currentTimeBlock?.endTime == nil
+        let isRetrospectiveTracking = currentEntryMode == .retrospective && retrospectiveAnchorTime != nil && !retrospectiveIsPaused
+        
+        UIApplication.shared.isIdleTimerDisabled = keepScreenOn && (isProspectiveTracking || isRetrospectiveTracking)
     }
 
     // MARK: - Set Auto-Switching
@@ -108,10 +138,61 @@ class TimeTrackingManager: ObservableObject {
         return rules.first(where: { $0.isActiveNow() })
     }
 
-    // MARK: - Activity Management
+    // MARK: - Unified Activity Management Handlers
+    
+    /// Called when the user taps an activity button.
+    /// Routes to the correct behavior based on the active set's entry mode.
+    func handleActivityTap(_ activity: Activity) {
+        switch currentEntryMode {
+        case .prospective:
+            startActivity(activity)
 
-    /// Start tracking an activity.
-    /// If the current block is paused, the pause is cleanly closed before switching.
+        case .retrospective:
+            // If there's no anchor yet, initialize from midnight
+            if retrospectiveAnchorTime == nil {
+                let midnight = Calendar.current.startOfDay(for: Date())
+                startRetrospectiveAnchor(at: midnight)
+            }
+            labelRetrospectiveBlock(activity: activity)
+        }
+    }
+
+    /// Called when the user taps pause.
+    func handlePauseTap() {
+        switch currentEntryMode {
+        case .prospective:
+            pauseCurrentActivity()
+        case .retrospective:
+            pauseRetrospective()
+        }
+    }
+
+    /// Called when the user taps resume.
+    func handleResumeTap() {
+        switch currentEntryMode {
+        case .prospective:
+            resumeFromPause()
+        case .retrospective:
+            resumeRetrospective()
+        }
+    }
+
+    /// Called when the user taps stop.
+    func handleStopTap() {
+        switch currentEntryMode {
+        case .prospective:
+            stopCurrentActivity()
+        case .retrospective:
+            // In retrospective mode, "stop" discards the unlabeled time
+            // and clears the anchor. The user is saying "I'm done tracking."
+            clearRetrospectiveAnchor()
+            updateIdleTimerState()
+        }
+    }
+
+    // MARK: - Prospective Tracking
+
+    /// Start tracking an activity prospectively.
     func startActivity(_ activity: Activity, targetDuration: TimeInterval? = nil) {
         let now = Date()
 
@@ -143,7 +224,6 @@ class TimeTrackingManager: ObservableObject {
         saveContext()
 
         if let target = duration {
-            // Calculate how much time is remaining right now
             let remaining = max(0, target - block.duration)
             if remaining > 0 {
                 scheduleTargetAlarm(duration: remaining, activityName: block.activityName)
@@ -155,17 +235,62 @@ class TimeTrackingManager: ObservableObject {
 
     private func checkTargetDuration() {
         guard let current = currentTimeBlock, let target = current.targetDuration else { return }
-        // Don't check while paused — the notification was already cancelled/deferred
         guard !current.isPaused else { return }
 
         if current.duration >= target {
             current.targetDuration = nil
             stopCurrentActivity()
 
-            // Foreground completion feedback
             HapticManager.shared.notification(type: .success)
             playTimerCompletionSound()
         }
+    }
+    
+    // MARK: - Retrospective Tracking
+    
+    /// Retrospective mode: label the unlabeled period as the given activity.
+    func labelRetrospectiveBlock(activity: Activity) {
+        let now = Date()
+
+        guard let anchor = retrospectiveAnchorTime else {
+            let midnight = Calendar.current.startOfDay(for: now)
+            startRetrospectiveAnchor(at: midnight)
+            labelRetrospectiveBlock(activity: activity)
+            return
+        }
+
+        if retrospectiveIsPaused {
+            closeRetrospectivePause(at: now)
+        }
+
+        let block = TimeBlock(activity: activity, startTime: anchor)
+        block.endTime = now
+        block.stopState = "stopped"
+        block.totalPauseDuration = retrospectivePauseDuration
+        modelContext.insert(block)
+
+        retrospectiveAnchorTime = now
+        retrospectivePauseDuration = 0
+        retrospectiveIsPaused = false
+        retrospectivePauseStart = nil
+
+        saveRetrospectiveState()
+        saveAndInvalidate(date: now)
+        updateIdleTimerState()
+    }
+    
+    func startRetrospectiveAnchor(at time: Date) {
+        retrospectiveAnchorTime = time
+        retrospectivePauseDuration = 0
+        retrospectiveIsPaused = false
+        retrospectivePauseStart = nil
+        saveRetrospectiveState()
+    }
+
+    func clearRetrospectiveAnchor() {
+        clearRetrospectiveState()
+        retrospectiveIsPaused = false
+        retrospectivePauseStart = nil
     }
 
     // MARK: - Target Alarm Notification
@@ -191,12 +316,10 @@ class TimeTrackingManager: ObservableObject {
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ["targetAlarm"])
     }
 
-    /// Re-schedule the alarm when pausing/resuming changes the effective remaining time.
     private func rescheduleTargetAlarmIfNeeded() {
         guard let current = currentTimeBlock,
               let target = current.targetDuration,
               !current.isPaused else {
-            // If paused, cancel — we'll reschedule on resume
             if currentTimeBlock?.targetDuration != nil {
                 cancelTargetAlarm()
             }
@@ -211,9 +334,7 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Foreground Timer Completion Sound
 
-    /// Plays a prominent alert sound when the timer completes while the app is foregrounded.
     private func playTimerCompletionSound() {
-        // Try the tri-tone alert first, fall back to system sound
         if let url = findAlertSoundURL() {
             do {
                 audioPlayer = try AVAudioPlayer(contentsOf: url)
@@ -221,13 +342,10 @@ class TimeTrackingManager: ObservableObject {
                 return
             } catch { /* fall through */ }
         }
-        // Fallback: system alert sound (1005 = "default alert")
         AudioServicesPlayAlertSound(SystemSoundID(1005))
     }
 
-    /// Searches for a built-in alert tone.
     private func findAlertSoundURL() -> URL? {
-        // tri-tone is the classic iOS timer sound
         let paths = [
             "/System/Library/Audio/UISounds/alarm.caf",
             "/System/Library/Audio/UISounds/nano/alarm_nightstand_haptic.caf",
@@ -237,9 +355,8 @@ class TimeTrackingManager: ObservableObject {
             .first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    // MARK: - Pause / Resume
+    // MARK: - Pause / Resume (Prospective)
 
-    /// Pause the current activity in-place.
     func pauseCurrentActivity() {
         guard let current = currentTimeBlock,
               !current.isPaused,
@@ -249,27 +366,24 @@ class TimeTrackingManager: ObservableObject {
         current.pauseStartTime = Date()
         current.pauseCount += 1
 
-        // Cancel alarm while paused — time isn't counting down
         if current.targetDuration != nil {
             cancelTargetAlarm()
         }
 
         clearBackgroundState()
         saveContext()
+        updateIdleTimerState()
     }
 
-    /// Resume from a pause. The same block continues; pause duration is recorded.
     func resumeFromPause() {
         guard let current = currentTimeBlock, current.isPaused else { return }
 
         closePause(on: current, at: Date())
         saveContext()
-
-        // Reschedule alarm with corrected remaining time
+        updateIdleTimerState()
         rescheduleTargetAlarmIfNeeded()
     }
 
-    /// Stop the current activity.
     func stopCurrentActivity() {
         guard let current = currentTimeBlock else { return }
         let now = Date()
@@ -286,9 +400,6 @@ class TimeTrackingManager: ObservableObject {
         scheduleInactivityReminder()
     }
 
-    // MARK: - Pause Helpers
-
-    /// Closes an in-progress pause: accumulates duration, resets pause state.
     private func closePause(on block: TimeBlock, at time: Date) {
         let elapsed = time.timeIntervalSince(block.pauseStartTime ?? time)
         block.totalPauseDuration += max(0, elapsed)
@@ -296,7 +407,6 @@ class TimeTrackingManager: ObservableObject {
         block.pauseStartTime = nil
     }
 
-    /// Called by the timer when a pause has exceeded the 10-minute limit.
     private func autostopDueToPauseTimeout(current: TimeBlock) {
         guard let pauseStart = current.pauseStartTime else { return }
 
@@ -320,6 +430,30 @@ class TimeTrackingManager: ObservableObject {
         current.endTime = time
         current.stopState = state
     }
+    
+    // MARK: - Pause / Resume (Retrospective)
+
+    func pauseRetrospective() {
+        guard !retrospectiveIsPaused, retrospectiveAnchorTime != nil else { return }
+        retrospectiveIsPaused = true
+        retrospectivePauseStart = Date()
+        saveRetrospectiveState()
+        updateIdleTimerState()
+    }
+
+    func resumeRetrospective() {
+        guard retrospectiveIsPaused else { return }
+        closeRetrospectivePause(at: Date())
+        saveRetrospectiveState()
+        updateIdleTimerState()
+    }
+
+    private func closeRetrospectivePause(at time: Date) {
+        let elapsed = time.timeIntervalSince(retrospectivePauseStart ?? time)
+        retrospectivePauseDuration += max(0, elapsed)
+        retrospectiveIsPaused = false
+        retrospectivePauseStart = nil
+    }
 
     // MARK: - Timer
 
@@ -329,18 +463,13 @@ class TimeTrackingManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
 
-                // Only force a UI refresh when there's an active block whose
-                // elapsed time is visibly ticking. Paused blocks and idle state
-                // don't need per-second redraws.
-                let isActivelyTracking = self.currentTimeBlock != nil
-                    && self.currentTimeBlock?.endTime == nil
+                let isActivelyTrackingProspective = self.currentTimeBlock != nil && self.currentTimeBlock?.endTime == nil
+                let isActivelyTrackingRetrospective = self.currentEntryMode == .retrospective && self.retrospectiveAnchorTime != nil
 
-                if isActivelyTracking {
+                if isActivelyTrackingProspective || isActivelyTrackingRetrospective {
                     self.objectWillChange.send()
                 }
 
-                // These checks still run every tick — they are cheap guards
-                // that bail out immediately when there's nothing to do.
                 self.checkPauseTimeout()
                 self.checkAndApplyCurrentTimeBlockRule()
                 self.checkTargetDuration()
@@ -353,19 +482,31 @@ class TimeTrackingManager: ObservableObject {
         timer = nil
     }
 
-    /// Enforce the 10-minute pause limit on every timer tick.
+    /// Enforce the 15-minute pause limit on every timer tick.
     private func checkPauseTimeout() {
-        guard let current = currentTimeBlock,
+        // Prospective
+        if let current = currentTimeBlock,
               current.isPaused,
               let pauseStart = current.pauseStartTime,
-              Date().timeIntervalSince(pauseStart) > maxPauseDuration else { return }
-        autostopDueToPauseTimeout(current: current)
+              Date().timeIntervalSince(pauseStart) > maxPauseDuration {
+            autostopDueToPauseTimeout(current: current)
+        }
+        
+        // Retrospective
+        if retrospectiveIsPaused,
+           let pauseStart = retrospectivePauseStart,
+           Date().timeIntervalSince(pauseStart) > maxPauseDuration {
+            
+            // Clear the abandoned anchor to avoid accumulating invisible pause time
+            clearRetrospectiveAnchor()
+            notifyPauseTimeout()
+            updateIdleTimerState()
+            scheduleInactivityReminder()
+        }
     }
 
     // MARK: - Background Tracking
 
-    /// Background task identifier — lets us request extra seconds from iOS
-    /// to finish saving state before the app is suspended.
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
     private func setupBackgroundTracking() {
@@ -381,8 +522,6 @@ class TimeTrackingManager: ObservableObject {
             name: UIApplication.willEnterForegroundNotification,
             object: nil
         )
-        // Last-chance save before iOS terminates the app.
-        // Not guaranteed to fire, but covers graceful termination.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillTerminate),
@@ -392,32 +531,31 @@ class TimeTrackingManager: ObservableObject {
     }
 
     @objc private func appDidEnterBackground() {
+        // Handle retrospective save implicitly if needed, mostly it just carries over as long as UserDefaults is updated.
+        saveRetrospectiveState()
+        
         guard let current = currentTimeBlock, current.endTime == nil else { return }
 
-        // Request extra time from iOS to finish saving (~5-30 seconds).
-        // Without this, iOS can suspend us before saves complete.
         backgroundTaskID = UIApplication.shared.beginBackgroundTask(withName: "SaveTrackingState") {
-            // Expiration handler — clean up if we run out of time
             self.endBackgroundTask()
         }
 
         backgroundEnteredTime = Date()
         saveBackgroundState()
-
-        // CRITICAL: Save the SwiftData context so the TimeBlock's current state
-        // (pause state, duration, etc.) survives app termination.
         saveContext()
 
         if !current.isPaused {
-            scheduleBackgroundReminder()
+            scheduleBackgroundReminder {
+                self.endBackgroundTask()
+            }
+        } else {
+            endBackgroundTask()
         }
-
-        endBackgroundTask()
     }
 
     @objc private func appWillTerminate() {
-        // Last-chance: persist everything we can
         saveBackgroundState()
+        saveRetrospectiveState()
         saveContext()
     }
 
@@ -433,6 +571,8 @@ class TimeTrackingManager: ObservableObject {
             clearBackgroundState()
             cancelBackgroundReminder()
         }
+        
+        loadRetrospectiveState()
 
         guard let backgroundTime = backgroundEnteredTime,
               let current = currentTimeBlock else { return }
@@ -454,12 +594,9 @@ class TimeTrackingManager: ObservableObject {
 
         saveContext()
         checkAndApplyCurrentTimeBlockRule()
-
-        // Reschedule target alarm with corrected remaining time after returning from background
         rescheduleTargetAlarmIfNeeded()
     }
 
-    /// Caps the block at (backgroundTime + maxBackgroundDuration) and stops tracking.
     private func handleBackgroundTimeout(current: TimeBlock, backgroundTime: Date) {
         let cappedEnd = backgroundTime.addingTimeInterval(maxBackgroundDuration)
         current.endTime = cappedEnd
@@ -473,14 +610,14 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Session Recovery
 
-    /// Called on init (cold launch). Finds any active TimeBlock and reconciles
-    /// elapsed time — handles background timeout, pause timeout, AND target
-    /// duration expiry that may have occurred while the app was terminated.
     private func resumeActiveTimeBlock() {
         let descriptor = FetchDescriptor<TimeBlock>(
             predicate: #Predicate { $0.endTime == nil },
             sortBy: [SortDescriptor(\.startTime, order: .reverse)]
         )
+
+        // Retrospective anchor recovery check is already handled by loadRetrospectiveState in init
+        // If app was killed while in retrospective mode without an anchor, we just wait for the first tap.
 
         guard let activeBlock = try? modelContext.fetch(descriptor).first else {
             cancelBackgroundReminder()
@@ -511,9 +648,6 @@ class TimeTrackingManager: ObservableObject {
             clearBackgroundState()
         }
 
-        // Check if the target duration was exceeded while the app was dead.
-        // The UNNotification may have fired, but the block was never auto-stopped
-        // because checkTargetDuration() only runs on the 1-second Timer tick.
         if let target = activeBlock.targetDuration,
            !activeBlock.isPaused,
            activeBlock.duration >= target {
@@ -528,7 +662,6 @@ class TimeTrackingManager: ObservableObject {
             updateIdleTimerState()
             scheduleInactivityReminder()
 
-            // Notify user that their timer completed while they were away
             notifyTimerCompletedWhileAway(activityName: activeBlock.activityName)
             cancelBackgroundReminder()
             return
@@ -536,8 +669,6 @@ class TimeTrackingManager: ObservableObject {
 
         cancelBackgroundReminder()
         updateIdleTimerState()
-
-        // Ensure target alarm is accurate after app relaunch
         rescheduleTargetAlarmIfNeeded()
     }
 
@@ -563,12 +694,87 @@ class TimeTrackingManager: ObservableObject {
     }
 
     private func switchToActivitySet(_ set: ActivitySet, ruleName: String) {
+        let previousMode = currentEntryMode
         let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
+        
         sets?.forEach { $0.isActive = false }
         set.isActive = true
         activeSet = set
         saveContext()
         notifySetSwitch(setName: set.name, ruleName: ruleName)
+        
+        // Handle mode transition
+        let newMode = set.entryMode
+
+        if previousMode == .prospective && newMode == .retrospective {
+            // Auto-stop the prospective block; anchor retrospective from its end
+            let anchorTime: Date
+            if let current = currentTimeBlock, current.endTime == nil {
+                let now = Date()
+                if current.isPaused { closePause(on: current, at: now) }
+                current.endTime = now
+                current.stopState = "switched"
+                currentTimeBlock = nil
+                anchorTime = now
+                cancelTargetAlarm()
+            } else {
+                anchorTime = Date()
+            }
+            startRetrospectiveAnchor(at: anchorTime)
+
+        } else if previousMode == .retrospective && newMode == .prospective {
+            // Discard any unlabeled retrospective time
+            clearRetrospectiveAnchor()
+
+        } else if previousMode == .retrospective && newMode == .retrospective {
+            // Switching between two retrospective sets — keep the anchor running
+        }
+
+        updateIdleTimerState()
+    }
+    
+    // MARK: - Retrospective State Persistence
+    
+    private func saveRetrospectiveState() {
+        UserDefaults.standard.set(
+            retrospectiveAnchorTime?.timeIntervalSince1970,
+            forKey: "retrospectiveAnchorTime"
+        )
+        UserDefaults.standard.set(
+            retrospectivePauseDuration,
+            forKey: "retrospectivePauseDuration"
+        )
+        UserDefaults.standard.set(
+            retrospectiveIsPaused,
+            forKey: "retrospectiveIsPaused"
+        )
+        UserDefaults.standard.set(
+            retrospectivePauseStart?.timeIntervalSince1970,
+            forKey: "retrospectivePauseStart"
+        )
+    }
+
+    private func loadRetrospectiveState() {
+        if let ts = UserDefaults.standard.object(forKey: "retrospectiveAnchorTime") as? Double {
+            retrospectiveAnchorTime = Date(timeIntervalSince1970: ts)
+        }
+        retrospectivePauseDuration = UserDefaults.standard.double(forKey: "retrospectivePauseDuration")
+        retrospectiveIsPaused = UserDefaults.standard.bool(forKey: "retrospectiveIsPaused")
+        if let ps = UserDefaults.standard.object(forKey: "retrospectivePauseStart") as? Double {
+            retrospectivePauseStart = Date(timeIntervalSince1970: ps)
+        }
+    }
+
+    private func clearRetrospectiveState() {
+        retrospectiveAnchorTime = nil
+        retrospectivePauseDuration = 0
+        retrospectiveIsPaused = false
+        retrospectivePauseStart = nil
+        
+        UserDefaults.standard.removeObject(forKey: "retrospectiveAnchorTime")
+        UserDefaults.standard.removeObject(forKey: "retrospectivePauseDuration")
+        UserDefaults.standard.removeObject(forKey: "retrospectiveIsPaused")
+        UserDefaults.standard.removeObject(forKey: "retrospectivePauseStart")
     }
 
     // MARK: - Data Queries
@@ -616,18 +822,25 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Notifications
 
-    private func scheduleBackgroundReminder() {
-        guard notificationsEnabled, maxBackgroundDuration > 300 else { return }
+    private func scheduleBackgroundReminder(completion: (() -> Void)? = nil) {
+        guard notificationsEnabled, maxBackgroundDuration > 300 else {
+            completion?()
+            return
+        }
         let reminderTime = maxBackgroundDuration - 300
         let content = UNMutableNotificationContent()
         content.title = "Cadence Activity Tracking"
-        content.body = "Your activity will stop in 5 minutes. Open the app to continue tracking."
+        content.body  = "Your activity will stop in 5 minutes. Open the app to continue tracking."
+        content.sound = .default
+        content.interruptionLevel = .timeSensitive
         let request = UNNotificationRequest(
             identifier: "backgroundReminder",
             content: content,
             trigger: UNTimeIntervalNotificationTrigger(timeInterval: reminderTime, repeats: false)
         )
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { _ in
+            completion?()
+        }
     }
 
     private func cancelBackgroundReminder() {
@@ -641,6 +854,7 @@ class TimeTrackingManager: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "Activity Stopped"
         content.body = "Your activity was stopped after \(maxBackgroundDuration.formattedDuration) in the background."
+        content.sound = .default
         let request = UNNotificationRequest(
             identifier: "activityStopped",
             content: content,
@@ -654,6 +868,7 @@ class TimeTrackingManager: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = "Activity Stopped"
         content.body = "Your activity was stopped after a \(maxPauseDuration.formattedDuration) pause."
+        content.sound = .default
         let request = UNNotificationRequest(
             identifier: "pauseTimeout",
             content: content,
@@ -691,14 +906,11 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Inactivity Reminder
 
-    /// Schedules a notification to remind the user they haven't logged any activity.
-    /// Called whenever the user stops an activity (or a block is auto-stopped).
     private func scheduleInactivityReminder() {
         guard notificationsEnabled else { return }
         let enabled = UserDefaults.standard.bool(forKey: "inactivityReminderEnabled")
         guard enabled else { return }
 
-        // Default 30 minutes; stored in seconds
         let interval = UserDefaults.standard.double(forKey: "inactivityReminderInterval")
         let reminderInterval = interval > 0 ? interval : 1800
 
@@ -729,8 +941,6 @@ class TimeTrackingManager: ObservableObject {
         }
     }
 
-    /// Saves the context and forces HistoryManager to recalculate the summary
-    /// for the given date, so StatsView never serves stale cached numbers.
     private func saveAndInvalidate(date: Date) {
         saveContext()
         historyManager.invalidateDate(date, in: modelContext)

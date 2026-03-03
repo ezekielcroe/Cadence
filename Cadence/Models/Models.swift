@@ -63,6 +63,34 @@ enum TrackingMode: String, Codable, CaseIterable {
     var autoSwitchesSets: Bool { self == .on }
 }
 
+enum EntryMode: String, CaseIterable, Codable {
+    case prospective   // Tap = "I'm starting this now"
+    case retrospective // Tap = "I just finished this"
+
+    var displayName: String {
+        switch self {
+        case .prospective:  return "Start"
+        case .retrospective: return "Log"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .prospective:
+            return "Tap an activity to start tracking it forward"
+        case .retrospective:
+            return "Tap an activity to label the time since your last entry"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .prospective:  return "play.fill"
+        case .retrospective: return "tag.fill"
+        }
+    }
+}
+
 // MARK: - Remark Model
 
 @Model
@@ -174,19 +202,25 @@ final class Activity {
 
 @Model
 final class ActivitySet {
-    var id:        UUID
-    var name:      String
-    var isActive:  Bool
-    var createdAt: Date
+    var id:           UUID
+    var name:         String
+    var isActive:     Bool
+    var createdAt:    Date
+    var entryModeRaw: String = "prospective"
 
-    // Relationship declared on Activity side with @Relationship(inverse:)
+    var entryMode: EntryMode {
+        get { EntryMode(rawValue: entryModeRaw) ?? .prospective }
+        set { entryModeRaw = newValue.rawValue }
+    }
+
     @Relationship var activities: [Activity] = []
 
-    init(name: String, isActive: Bool = false) {
-        self.id        = UUID()
-        self.name      = name
-        self.isActive  = isActive
-        self.createdAt = Date()
+    init(name: String, isActive: Bool = false, entryMode: EntryMode = .prospective) {
+        self.id           = UUID()
+        self.name         = name
+        self.isActive     = isActive
+        self.createdAt    = Date()
+        self.entryModeRaw = entryMode.rawValue
     }
 }
 

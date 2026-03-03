@@ -30,9 +30,10 @@ struct ActivityDTO: Codable {
 }
 
 struct ActivitySetDTO: Codable {
-    let id: UUID
-    let name: String
-    let isActive: Bool
+    let id:           UUID
+    let name:         String
+    let isActive:     Bool
+    let entryModeRaw: String?   // Optional for backward compatibility with older backups
 }
 
 struct TimeBlockDTO: Codable {
@@ -143,7 +144,7 @@ class DataArchiveManager {
                         color: act.color, setIDs: act.sets.map { $0.id },
                         sortOrder: act.sortOrder, goalRaw: act.goalRaw)
         }
-        let setDTOs = sets.map { ActivitySetDTO(id: $0.id, name: $0.name, isActive: $0.isActive) }
+        let setDTOs = sets.map { ActivitySetDTO(id: $0.id, name: $0.name, isActive: $0.isActive, entryModeRaw: $0.entryModeRaw) }
 
         let metadata = BackupMetadata(
             exportDate:  Date(),

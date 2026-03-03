@@ -15,7 +15,7 @@ struct TrackingView: View {
     @Query private var activities: [Activity]
     @Query private var dayNotes: [DayNote]
 
-    @State private var timer             = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     @State private var showingQuickRemark = false
     @State private var showingIntention  = false
 
@@ -26,7 +26,12 @@ struct TrackingView: View {
         return activities.sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    var isCurrentlyPaused: Bool { manager.currentTimeBlock?.isPaused ?? false }
+    var isCurrentlyPaused: Bool {
+        if manager.currentEntryMode == .prospective {
+            return manager.currentTimeBlock?.isPaused ?? false
+        }
+        return false // Handled separately in retrospective mode
+    }
 
     /// Today's DayNote if it exists
     private var todayNote: DayNote? {
@@ -45,32 +50,61 @@ struct TrackingView: View {
         ScrollView {
             VStack(spacing: 20) {
 
-                // Morning intention banner — subtle, non-intrusive
+                // Morning intention banner
                 if shouldShowIntentionBanner {
                     IntentionBanner { showingIntention = true }
                         .padding(.horizontal)
                 } else if let note = todayNote, !note.intention.isEmpty {
-                    // Show today's intention if set
                     IntentionDisplayCard(intention: note.intention) { showingIntention = true }
                         .padding(.horizontal)
                 }
 
-                CurrentActivityCard(
-                    block: manager.currentTimeBlock,
-                    isPaused: isCurrentlyPaused,
-                    onPause: { manager.pauseCurrentActivity() },
-                    onStop:  { manager.stopCurrentActivity() },
-                    onResume: { manager.resumeFromPause() },
-                    onQuickRemark: { showingQuickRemark = true },
-                    onSetTarget: { target in
-                        if let currentBlock = manager.currentTimeBlock {
-                            manager.setTargetDuration(for: currentBlock, duration: target)
+                // Mode-specific Tracking Cards
+                if manager.currentEntryMode == .prospective {
+                    CurrentActivityCard(
+                        block: manager.currentTimeBlock,
+                        isPaused: isCurrentlyPaused,
+                        onPause:  { manager.handlePauseTap() },
+                        onStop:   { manager.handleStopTap() },
+                        onResume: { manager.handleResumeTap() },
+                        onQuickRemark: { showingQuickRemark = true },
+                        onSetTarget: { target in
+                            if let currentBlock = manager.currentTimeBlock {
+                                manager.setTargetDuration(for: currentBlock, duration: target)
+                            }
                         }
-                    }
-                )
+                    )
+                } else if manager.currentEntryMode == .retrospective {
+                    RetrospectiveCard(
+                        unlabeledDuration: manager.unlabeledDuration,
+                        isPaused: manager.retrospectiveIsPaused,
+                        hasAnchor: manager.retrospectiveAnchorTime != nil,
+                        onPause:  { manager.handlePauseTap() },
+                        onResume: { manager.handleResumeTap() },
+                        onDiscard: { manager.handleStopTap() }
+                    )
+                }
 
+                // Set Picker & Mode Indicator
                 if activitySets.count > 1 {
-                    ActivitySetPicker(sets: activitySets).padding(.horizontal)
+                    HStack {
+                        ActivitySetPicker(sets: activitySets)
+                        
+                        // Mode badge
+                        Label(
+                            manager.currentEntryMode.displayName,
+                            systemImage: manager.currentEntryMode.icon
+                        )
+                        .font(.caption2).fontWeight(.medium)
+                        .foregroundStyle(manager.currentEntryMode == .retrospective ? .orange : .blue)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(
+                            (manager.currentEntryMode == .retrospective ? Color.orange : Color.blue)
+                                .opacity(0.12)
+                        )
+                        .cornerRadius(6)
+                    }
+                    .padding(.horizontal)
                 }
 
                 LazyVGrid(columns: [
@@ -79,12 +113,12 @@ struct TrackingView: View {
                     ForEach(activeSetActivities) { activity in
                         ActivityButton(
                             activity: activity,
-                            isActive: manager.currentTimeBlock?.activityID == activity.id && !isCurrentlyPaused
+                            isActive: manager.currentEntryMode == .prospective && manager.currentTimeBlock?.activityID == activity.id && !isCurrentlyPaused
                         ) {
-                            if isCurrentlyPaused && manager.currentTimeBlock?.activityID == activity.id {
-                                manager.resumeFromPause()
+                            if manager.currentEntryMode == .prospective && isCurrentlyPaused && manager.currentTimeBlock?.activityID == activity.id {
+                                manager.handleResumeTap()
                             } else {
-                                manager.startActivity(activity)
+                                manager.handleActivityTap(activity)
                             }
                         }
                     }
@@ -94,16 +128,18 @@ struct TrackingView: View {
             .padding(.top)
         }
         .onReceive(timer) { _ in
-            if manager.currentTimeBlock != nil { manager.objectWillChange.send() }
+            let isActivelyTrackingProspective = manager.currentTimeBlock != nil && manager.currentTimeBlock?.endTime == nil
+            let isActivelyTrackingRetrospective = manager.currentEntryMode == .retrospective && manager.retrospectiveAnchorTime != nil
+            
+            if isActivelyTrackingProspective || isActivelyTrackingRetrospective {
+                manager.objectWillChange.send()
+            }
         }
         .onAppear {
-            // Ensure idle timer state is correct when this tab appears
             manager.updateIdleTimerState()
         }
         .onDisappear {
-            // Re-enable idle timer when leaving tracking tab
-            // (updateIdleTimerState will handle this correctly since
-            //  the user might navigate to settings mid-session)
+            // Handled automatically by idle timer updates
         }
         .sheet(isPresented: $showingQuickRemark) {
             if let block = manager.currentTimeBlock {
@@ -117,7 +153,89 @@ struct TrackingView: View {
     }
 }
 
-// MARK: - Intention Banner (shown when no intention is set)
+// MARK: - New Retrospective Card
+
+struct RetrospectiveCard: View {
+    let unlabeledDuration: TimeInterval
+    let isPaused: Bool
+    let hasAnchor: Bool
+    let onPause: () -> Void
+    let onResume: () -> Void
+    let onDiscard: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            // Status label
+            HStack {
+                Image(systemName: "clock.badge.questionmark")
+                    .foregroundStyle(.orange)
+                Text("Unlabeled Time")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if isPaused {
+                    Text("PAUSED")
+                        .font(.caption2).fontWeight(.bold)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 8).padding(.vertical, 2)
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(4)
+                }
+            }
+
+            // Elapsed time — large display
+            if hasAnchor {
+                Text(unlabeledDuration.formattedDuration)
+                    .font(.system(size: 48, weight: .light, design: .monospaced))
+                    .foregroundStyle(isPaused ? .secondary : .primary)
+                    .contentTransition(.numericText())
+            } else {
+                Text("Tap an activity to start logging")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 14)
+            }
+
+            // Hint text
+            if hasAnchor {
+                Text("Tap an activity below to label this time")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Controls
+            if hasAnchor {
+                HStack(spacing: 16) {
+                    Button(action: isPaused ? onResume : onPause) {
+                        Label(
+                            isPaused ? "Resume" : "Pause",
+                            systemImage: isPaused ? "play.fill" : "pause.fill"
+                        )
+                        .font(.subheadline).fontWeight(.medium)
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(isPaused ? .green : .blue)
+
+                    Button(role: .destructive, action: onDiscard) {
+                        Label("Discard", systemImage: "xmark")
+                            .font(.subheadline).fontWeight(.medium)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                }
+                .padding(.top, 8)
+            }
+        }
+        .padding()
+        .background(Color(.systemGray6))
+        .cornerRadius(16)
+        .padding(.horizontal)
+    }
+}
+
+// MARK: - Intention Banner (unchanged)
 
 struct IntentionBanner: View {
     let onTap: () -> Void
@@ -153,7 +271,7 @@ struct IntentionBanner: View {
     }
 }
 
-// MARK: - Intention Display Card (shown when intention exists)
+// MARK: - Intention Display Card (unchanged)
 
 struct IntentionDisplayCard: View {
     let intention: String
@@ -185,7 +303,7 @@ struct IntentionDisplayCard: View {
     }
 }
 
-// MARK: - Intention Sheet
+// MARK: - Intention Sheet (unchanged)
 
 struct IntentionSheet: View {
     @Environment(\.modelContext) private var modelContext
@@ -250,7 +368,7 @@ struct IntentionSheet: View {
     }
 }
 
-// MARK: - Updated QuickRemarkSheet (saves Remark records)
+// MARK: - Updated QuickRemarkSheet (unchanged)
 
 struct QuickRemarkSheet: View {
     @Environment(\.modelContext) private var modelContext
