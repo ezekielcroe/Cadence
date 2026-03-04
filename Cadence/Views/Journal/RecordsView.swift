@@ -42,6 +42,7 @@ struct RecordsView: View {
     @State private var currentMonth: Date = Date()
     @State private var showArchived = false
     @State private var addBlockMode: AddBlockMode? = nil
+    @State private var navigateToRemarksDate: Date?
 
     // MARK: - Filter State
     @State private var searchText = ""
@@ -119,6 +120,9 @@ struct RecordsView: View {
                             onDeleteBlock: { block in recordUndo(for: block) },
                             onFillGap: { gap in
                                 addBlockMode = .fillGap(gap)
+                            },
+                            onNoteTap: { date in // NEW: Catch callback to push detail view
+                                navigateToRemarksDate = date
                             }
                         )
                         .id(currentMonth)
@@ -181,6 +185,10 @@ struct RecordsView: View {
                         try? modelContext.save()
                     }
                 )
+            }
+            // NEW: Dive-in destination from the timeline tap
+            .navigationDestination(item: $navigateToRemarksDate) { date in
+                RemarksTimelineView(initialDate: date)
             }
         }
         .onAppear {

@@ -141,8 +141,7 @@ struct CadenceApp: App {
             startTime: workStart,
             endTime: workEnd,
             linkedSetID: workSet.id,
-            daysOfWeek: [],
-            trackingMode: .on
+            daysOfWeek: []
         ))
         
         context.insert(TimeBlockRule(
@@ -150,8 +149,7 @@ struct CadenceApp: App {
             startTime: personalStart,
             endTime: personalEnd,
             linkedSetID: personalSet.id,
-            daysOfWeek: [],
-            trackingMode: .on
+            daysOfWeek: []
         ))
         
         try? context.save() 

@@ -2,7 +2,6 @@
 // Cadence
 //
 
-
 import SwiftUI
 import SwiftData
 
@@ -10,7 +9,7 @@ import SwiftData
 
 /// Groups day-level remark data into a calendar week for collapsible display.
 private struct WeekBucket: Identifiable {
-    let id: String                  // e.g. "2026-W09"
+    let id: String
     let weekStart: Date
     let weekEnd: Date
     let days: [DayBucket]
@@ -47,10 +46,11 @@ struct RemarksTimelineView: View {
     @Environment(\.modelContext) private var modelContext
 
     // Navigation & filter state
-    @State private var currentMonth: Date = Date()
+    @State private var currentMonth: Date
     @State private var searchText = ""
     @State private var selectedTag: String? = nil
-    @State private var expandedWeekIDs: Set<String> = []
+    @State private var expandedWeekIDs: Set<String>
+    @State private var editingNoteType: NoteEditType? // NEW: For edits
 
     // Data
     @Query(sort: \Remark.timestamp, order: .reverse) private var allRemarks: [Remark]
@@ -63,6 +63,33 @@ struct RemarksTimelineView: View {
 
     private var isViewingCurrentMonth: Bool {
         Calendar.current.isDate(currentMonth, equalTo: Date(), toGranularity: .month)
+    }
+
+    // NEW: Editing Identifier
+    enum NoteEditType: Identifiable {
+        case intention(Date), reflection(Date)
+        var id: String {
+            switch self {
+            case .intention(let d): return "i-\(d.timeIntervalSince1970)"
+            case .reflection(let d): return "r-\(d.timeIntervalSince1970)"
+            }
+        }
+    }
+
+    // NEW: Allow targeted deep linking
+    init(initialDate: Date? = nil) {
+        let dateToUse = initialDate ?? Date()
+        _currentMonth = State(initialValue: dateToUse)
+        
+        if initialDate != nil {
+            let cal = Calendar.current
+            let weekNum = cal.component(.weekOfYear, from: dateToUse)
+            let year = cal.component(.year, from: dateToUse)
+            let weekID = "\(year)-W\(String(format: "%02d", weekNum))"
+            _expandedWeekIDs = State(initialValue: [weekID])
+        } else {
+            _expandedWeekIDs = State(initialValue: [])
+        }
     }
 
     // MARK: - Body
@@ -91,6 +118,20 @@ struct RemarksTimelineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search all remarks…")
             .onChange(of: currentMonth) { _, _ in resetExpansion() }
+            .sheet(item: $editingNoteType) { type in // NEW: Sheet Presentation
+                switch type {
+                case .intention(let d):
+                    if let note = allNotes.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
+                        IntentionSheet(existingNote: note)
+                            .presentationDetents([.medium])
+                    }
+                case .reflection(let d):
+                    if let note = allNotes.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
+                        ReflectionSheet(existingNote: note)
+                            .presentationDetents([.medium])
+                    }
+                }
+            }
         }
     }
 
@@ -301,7 +342,6 @@ struct RemarksTimelineView: View {
     // MARK: - Expansion Logic
 
     private func isWeekExpanded(_ week: WeekBucket) -> Bool {
-        // Current week is always expanded by default; others need explicit expansion
         if week.isCurrentWeek && !expandedWeekIDs.contains("collapsed-\(week.id)") {
             return true
         }
@@ -311,7 +351,6 @@ struct RemarksTimelineView: View {
     private func toggleWeek(_ week: WeekBucket) {
         withAnimation(.easeInOut(duration: 0.25)) {
             if week.isCurrentWeek {
-                // For current week, use a "collapsed" marker to override the default-expanded
                 if expandedWeekIDs.contains("collapsed-\(week.id)") {
                     expandedWeekIDs.remove("collapsed-\(week.id)")
                 } else {
@@ -344,13 +383,11 @@ struct RemarksTimelineView: View {
                 ForEach(buckets) { week in
                     Section {
                         if isWeekExpanded(week) {
-                            // Expanded: show all day sections inline
                             ForEach(week.days) { day in
                                 dayHeader(day)
                                 dayContent(day)
                             }
                         } else {
-                            // Collapsed: summary row
                             collapsedWeekRow(week)
                         }
                     } header: {
@@ -432,7 +469,7 @@ struct RemarksTimelineView: View {
                     }
                 }
 
-                // Day preview: show first remark text from each day (max 2 days)
+                // Day preview
                 let previewDays = week.days.prefix(2)
                 ForEach(previewDays) { day in
                     if let firstRemark = day.remarks.first {
@@ -450,7 +487,6 @@ struct RemarksTimelineView: View {
                     }
                 }
 
-                // "Tap to expand" hint
                 Text("Tap to expand")
                     .font(.caption2)
                     .foregroundStyle(.blue.opacity(0.6))
@@ -460,7 +496,7 @@ struct RemarksTimelineView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Day Header (within expanded week)
+    // MARK: - Day Header
 
     private func dayHeader(_ day: DayBucket) -> some View {
         HStack {
@@ -477,7 +513,7 @@ struct RemarksTimelineView: View {
         .listRowSeparator(.hidden, edges: .bottom)
     }
 
-    // MARK: - Day Content (within expanded week)
+    // MARK: - Day Content
 
     @ViewBuilder
     private func dayContent(_ day: DayBucket) -> some View {
@@ -485,6 +521,7 @@ struct RemarksTimelineView: View {
         if selectedTag == nil, let note = day.note, !note.reflection.isEmpty {
             compactBookend(icon: "moon.stars.fill", tint: .indigo,
                            label: "Reflection", text: note.reflection)
+                .onTapGesture { editingNoteType = .reflection(day.id) } // NEW: Edit access
         }
 
         // Remarks
@@ -500,6 +537,7 @@ struct RemarksTimelineView: View {
         if selectedTag == nil, let note = day.note, !note.intention.isEmpty {
             compactBookend(icon: "sun.horizon.fill", tint: .orange,
                            label: "Intention", text: note.intention)
+                .onTapGesture { editingNoteType = .intention(day.id) } // NEW: Edit access
         }
     }
 
@@ -563,12 +601,12 @@ struct RemarksTimelineView: View {
                     .font(.caption2).fontWeight(.semibold).foregroundStyle(tint.opacity(0.7))
                 Text(text)
                     .font(.subheadline).foregroundStyle(.primary.opacity(0.8))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true) // NEW: Guarantee Full visibility
             }
         }
         .padding(.vertical, 3)
         .listRowBackground(tint.opacity(0.03))
+        .contentShape(Rectangle()) // NEW: Makes the entire white space block tappable
     }
 
     // MARK: - Empty State

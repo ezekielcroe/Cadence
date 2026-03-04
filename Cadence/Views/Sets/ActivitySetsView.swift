@@ -26,9 +26,6 @@ struct ActivitySetsView: View {
                                 Text(set.name).font(.body)
                                 HStack(spacing: 6) {
                                     Text("\(set.activities.count) activit\(set.activities.count == 1 ? "y" : "ies")")
-                                    Text("·")
-                                    Image(systemName: set.entryMode.icon)
-                                    Text(set.entryMode.displayName)
                                 }
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -106,21 +103,6 @@ struct ActivitySetDetailView: View {
                 Text("Set Info")
             }
 
-            // MARK: NEW - Entry Mode Picker
-            Section {
-                Picker("Entry Mode", selection: $activitySet.entryMode) {
-                    ForEach(EntryMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName)
-                            .tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-            } header: {
-                Text("Entry Mode")
-            } footer: {
-                Text(activitySet.entryMode.description)
-            }
-
             Section {
                 if sortedActivities.isEmpty {
                     Text("No activities yet — add some below.")
@@ -160,13 +142,6 @@ struct ActivitySetDetailView: View {
         }
         .navigationTitle(activitySet.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { try? modelContext.save() } label: {
-                    Text("Done").fontWeight(.semibold)
-                }
-            }
-        }
         .sheet(isPresented: $showingAddToSet) {
             AddToSetSheet(set: activitySet, allActivities: allActivities)
         }
@@ -259,23 +234,12 @@ struct AddActivitySetView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss)      private var dismiss
     @State private var name = ""
-    @State private var entryMode: EntryMode = .prospective
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     TextField("Set Name", text: $name)
-                }
-                
-                Section(header: Text("Entry Mode"), footer: Text(entryMode.description)) {
-                    Picker("Entry Mode", selection: $entryMode) {
-                        ForEach(EntryMode.allCases, id: \.self) { mode in
-                            Text(mode.displayName)
-                                .tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
                 }
             }
             .navigationTitle("New Activity Set")
@@ -293,7 +257,9 @@ struct AddActivitySetView: View {
     }
 
     private func addSet() {
-        modelContext.insert(ActivitySet(name: name, entryMode: entryMode))
+        // Note: Make sure your ActivitySet initializer in Models.swift
+        // no longer requires the `entryMode` parameter.
+        modelContext.insert(ActivitySet(name: name))
         try? modelContext.save()
         dismiss()
     }

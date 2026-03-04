@@ -1,5 +1,5 @@
 // ============================================================
-// FILE: Cadence/Views/Journal/QuickEditSheet.swift
+// FILE: Cadence/Views/Journal/RecordEditSheet.swift
 // ============================================================
 
 import SwiftUI
@@ -25,10 +25,13 @@ struct QuickEditSheet: View {
     // UI state
     @State private var validationResult: ValidationResult?
     @State private var showingConflictConfirmation = false
-    @State private var showingFullEditor = false
     @State private var showingActivityPicker = false
+    @State private var showingSplitSheet = false
 
-    // Remarks for this block
+    // Remarks state
+    @State private var newRemarkText = ""
+    @FocusState private var remarkFieldFocused: Bool
+
     init(block: TimeBlock, conflictDetector: ConflictDetector, onSave: @escaping () -> Void) {
         self.block            = block
         self.conflictDetector = conflictDetector
@@ -71,67 +74,59 @@ struct QuickEditSheet: View {
 
                 Divider()
 
-                // Core edits — no scrolling needed on .medium
+                // Core edits — auto expands sheet when scrolled
                 Form {
-                    // Activity
+                    // --- QUICK EDIT ITEMS ---
+                    
                     Section {
                         activityPickerButton
                     }
 
-                    // Time — compact
                     Section {
                         timeEditors
                     }
 
-                    // Validation warnings
                     if let validation = validationResult, !validation.isValid {
                         Section {
                             conflictWarnings(validation)
                         }
                     }
 
-                    // Remark preview (read-only; edit in Full Editor)
-                    if !blockRemarks.isEmpty {
-                        Section {
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(blockRemarks.first?.preview ?? "")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                    if blockRemarks.count > 1 {
-                                        Text("+\(blockRemarks.count - 1) more remark\(blockRemarks.count > 2 ? "s" : "")")
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                }
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture { showingFullEditor = true }
-                        } header: {
-                            Text("Remarks")
+                    // --- FULL EDIT ITEMS (Revealed on Scroll/Swipe Up) ---
+                    
+                    Section {
+                        ForEach(blockRemarks) { remark in
+                            RemarkRow(remark: remark, onDelete: { deleteRemark(remark) })
                         }
+                        
+                        HStack {
+                            TextField("Add a remark...", text: $newRemarkText)
+                                .focused($remarkFieldFocused)
+                                .onSubmit { addRemark() }
+                            
+                            if !newRemarkText.isEmpty {
+                                Button(action: addRemark) {
+                                    Image(systemName: "arrow.up.circle.fill")
+                                        .font(.title3)
+                                        .foregroundStyle(.blue)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    } header: {
+                        Text("Remarks")
                     }
-
-                    // "More Options" link
+                    
                     Section {
                         Button {
-                            showingFullEditor = true
+                            showingSplitSheet = true
                         } label: {
-                            HStack {
-                                Label("More Options", systemImage: "ellipsis.circle")
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
+                            Label("Split Block", systemImage: "scissors")
                         }
+                    } header: {
+                        Text("Advanced")
                     } footer: {
-                        Text("Remarks, split, merge, and metadata")
+                        Text("Split this block into two separate activities.")
                     }
                 }
             }
@@ -158,12 +153,11 @@ struct QuickEditSheet: View {
                     Text(validation.conflicts.map { $0.description }.joined(separator: "\n"))
                 }
             }
-            .sheet(isPresented: $showingFullEditor) {
-                FullEditSheet(
-                    block: block,
-                    conflictDetector: conflictDetector,
-                    onSave: { onSave(); dismiss() }
-                )
+            .sheet(isPresented: $showingSplitSheet) {
+                SplitBlockSheet(block: block, onSplit: {
+                    onSave()
+                    dismiss()
+                })
             }
             .sheet(isPresented: $showingActivityPicker) {
                 ActivityPickerSheet(
@@ -358,9 +352,60 @@ struct QuickEditSheet: View {
         let next     = idx < allBlocks.count - 1 ? allBlocks[idx + 1] : nil
         return (previous, next)
     }
+    
+    // MARK: - Remarks Actions
+    
+    private func addRemark() {
+        let trimmed = newRemarkText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let remark = Remark(timeBlockID: block.id, text: trimmed)
+        modelContext.insert(remark)
+        try? modelContext.save()
+        newRemarkText = ""
+        remarkFieldFocused = false
+    }
+
+    private func deleteRemark(_ remark: Remark) {
+        modelContext.delete(remark)
+        try? modelContext.save()
+    }
 }
 
-// MARK: - Activity Picker Sheet (unchanged — already groups by set)
+// MARK: - RemarkRow
+
+struct RemarkRow: View {
+    let remark: Remark
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(remark.timestamp.formatted(date: .omitted, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                Spacer()
+            }
+
+            Text(remark.text)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if !remark.tags.isEmpty {
+                TagChipRow(tags: remark.tags)
+            }
+        }
+        .padding(.vertical, 2)
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) { onDelete() } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+}
+
+// MARK: - Activity Picker Sheet
 
 struct ActivityPickerSheet: View {
     @Environment(\.dismiss) private var dismiss

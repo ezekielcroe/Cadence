@@ -144,7 +144,7 @@ class DataArchiveManager {
                         color: act.color, setIDs: act.sets.map { $0.id },
                         sortOrder: act.sortOrder, goalRaw: act.goalRaw)
         }
-        let setDTOs = sets.map { ActivitySetDTO(id: $0.id, name: $0.name, isActive: $0.isActive, entryModeRaw: $0.entryModeRaw) }
+        let setDTOs = sets.map { ActivitySetDTO(id: $0.id, name: $0.name, isActive: $0.isActive, entryModeRaw: nil) }
 
         let metadata = BackupMetadata(
             exportDate:  Date(),

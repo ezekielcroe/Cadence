@@ -69,28 +69,19 @@ struct ScheduleRuleRow: View {
         return set.name
     }
 
-    var trackingModeColor: Color { rule.trackingMode == .on ? .red : .blue }
-
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(rule.name).font(.headline)
-                    HStack(spacing: 2) {
-                        Image(systemName: rule.trackingMode.icon).font(.caption2)
-                        Text(rule.trackingMode.displayName).font(.caption2)
-                    }
-                    .padding(.horizontal, 6).padding(.vertical, 2)
-                    .background(trackingModeColor.opacity(0.15))
-                    .foregroundStyle(trackingModeColor)
-                    .cornerRadius(4)
                 }
                 Text(rule.timeRangeDisplay)
                     .font(.subheadline).foregroundStyle(.secondary)
                 HStack {
                     Text(rule.daysOfWeekDisplay)
                         .font(.caption).foregroundStyle(.secondary)
-                    if rule.linkedSetID != nil && rule.trackingMode != .off {
+                        
+                    if rule.linkedSetID != nil {
                         Text("→ \(linkedSetName)")
                             .font(.caption).foregroundStyle(.blue)
                     }
@@ -121,7 +112,6 @@ struct AddScheduleView: View {
     @State private var endTime       = Date()
     @State private var linkedSetID: UUID? = nil
     @State private var selectedDays: Set<Int> = []
-    @State private var trackingMode: TrackingMode = .on
 
     let daysOfWeek = [
         (1, "Sun"), (2, "Mon"), (3, "Tue"), (4, "Wed"),
@@ -139,34 +129,11 @@ struct AddScheduleView: View {
                 }
 
                 Section {
-                    Picker("Mode", selection: $trackingMode) {
-                        Label("Tracking", systemImage: "clock.badge.checkmark").tag(TrackingMode.on)
-                        Label("Paused",   systemImage: "clock.badge.xmark").tag(TrackingMode.off)
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("Tracking Mode")
-                } footer: {
-                    Text(trackingMode == .on
-                         ? "Tracks activities and creates gaps"
-                         : "Tracker is paused during this schedule")
-                }
-
-                Section {
                     Picker("Link to Activity Set", selection: $linkedSetID) {
                         Text("None").tag(nil as UUID?)
                         ForEach(sets) { set in
                             Text(set.name).tag(set.id as UUID?)
                         }
-                    }
-                } header: {
-                    Text("Auto-Switch")
-                } footer: {
-                    if trackingMode == .off {
-                        Text("Auto-switch is disabled when tracking mode is Off")
-                            .foregroundStyle(.orange)
-                    } else {
-                        Text("When this schedule starts, automatically switch to the selected Activity Set.")
                     }
                 }
 
@@ -208,9 +175,7 @@ struct AddScheduleView: View {
             name:         name,
             startTime:    startTime,
             endTime:      endTime,
-            linkedSetID:  trackingMode == .off ? nil : linkedSetID,
             daysOfWeek:   Array(selectedDays),
-            trackingMode: trackingMode
         )
         modelContext.insert(rule)
         try? modelContext.save()
@@ -222,77 +187,73 @@ struct AddScheduleView: View {
 // Renamed from TimeBlockEditView — logic and form unchanged,
 // only display strings updated.
 
+// ============================================================
+// FILE: Cadence/Views/Sets/SchedulesView.swift
+// Refactored to eliminate explicit Tracking Mode selection.
+// ============================================================
+
+import SwiftUI
+import SwiftData
+
 struct ScheduleEditView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @Query private var sets: [ActivitySet]
-
+    @Query private var activitySets: [ActivitySet]
+    
     @Bindable var rule: TimeBlockRule
-
     @State private var selectedDays: Set<Int> = []
 
     let daysOfWeek = [
-        (1, "Sun"), (2, "Mon"), (3, "Tue"), (4, "Wed"),
-        (5, "Thu"), (6, "Fri"), (7, "Sat")
+        (1, "Sunday"), (2, "Monday"), (3, "Tuesday"),
+        (4, "Wednesday"), (5, "Thursday"), (6, "Friday"), (7, "Saturday")
     ]
-
-    private var trackingModeFooter: String {
-        switch rule.trackingMode {
-        case .on:  return "Tracks activities and creates gaps"
-        case .off: return "Tracker is paused during this schedule"
-        }
-    }
 
     var body: some View {
         Form {
-            TextField("Name", text: $rule.name)
-
-            Section("Time Range") {
-                DatePicker("Start Time", selection: $rule.startTime, displayedComponents: .hourAndMinute)
-                DatePicker("End Time",   selection: $rule.endTime,   displayedComponents: .hourAndMinute)
-            }
-
             Section {
-                Picker("Mode", selection: $rule.trackingMode) {
-                    Label("Tracking", systemImage: "clock.badge.checkmark").tag(TrackingMode.on)
-                    Label("Paused",   systemImage: "clock.badge.xmark").tag(TrackingMode.off)
-                }
-                .pickerStyle(.segmented)
+                TextField("Schedule Name", text: $rule.name)
             } header: {
-                Text("Tracking Mode")
-            } footer: {
-                Text(trackingModeFooter)
+                Text("Name")
             }
 
             Section {
-                Picker("Link to Activity Set", selection: $rule.linkedSetID) {
-                    Text("None").tag(nil as UUID?)
-                    ForEach(sets) { set in
-                        Text(set.name).tag(set.id as UUID?)
+                DatePicker("Start Time", selection: $rule.startTime, displayedComponents: .hourAndMinute)
+                DatePicker("End Time", selection: $rule.endTime, displayedComponents: .hourAndMinute)
+            } header: {
+                Text("Time Range")
+            }
+
+            // MARK: - Refactored Context Association
+            // The logic controlling tracking mode state has been removed entirely.
+            // This now solely dictates which context the app switches to.
+            Section {
+                Picker("Activity Set", selection: $rule.linkedSetID) {
+                    Text("None").tag(UUID?.none)
+                    ForEach(activitySets) { set in
+                        Text(set.name).tag(UUID?.some(set.id))
                     }
                 }
             } header: {
-                Text("Auto-Switch")
+                Text("Associated Set")
             } footer: {
-                if rule.trackingMode == .off {
-                    Text("Auto-switch is disabled when tracking mode is Off")
-                        .foregroundStyle(.orange)
-                } else {
-                    Text("When this schedule starts, automatically switch to the selected Activity Set.")
-                }
+                Text("When this schedule is active, the app will automatically track gaps and switch to this set's assigned Entry Mode.")
             }
 
+            // MARK: - Schedules & Enabling Toggles
             Section {
-                if selectedDays.isEmpty {
-                    Text("Every day").foregroundStyle(.secondary)
+                HStack {
+                    Text("Selected Days:")
+                    Spacer()
+                    Text(selectedDays.isEmpty ? "Every day" : "\(selectedDays.count) days")
+                        .foregroundStyle(.secondary)
                 }
                 ForEach(daysOfWeek, id: \.0) { day in
                     Toggle(day.1, isOn: Binding(
                         get: { selectedDays.contains(day.0) },
                         set: { newValue in
                             if newValue { selectedDays.insert(day.0) }
-                            else        { selectedDays.remove(day.0) }
-                            rule.daysOfWeek = Array(selectedDays)
+                            else { selectedDays.remove(day.0) }
+                            rule.daysOfWeek = Array(selectedDays).sorted()
                         }
                     ))
                 }
@@ -320,7 +281,10 @@ struct ScheduleEditView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { try? modelContext.save(); dismiss() }
+                Button("Done") {
+                    try? modelContext.save()
+                    dismiss()
+                }
             }
         }
         .onAppear { selectedDays = Set(rule.daysOfWeek) }

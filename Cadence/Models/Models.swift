@@ -33,35 +33,7 @@ enum ActivityGoal: String, Codable, CaseIterable {
     }
 }
 
-// MARK: - TrackingMode
-
-enum TrackingMode: String, Codable, CaseIterable {
-    case on  = "on"
-    case off = "off"
-
-    var displayName: String {
-        switch self {
-        case .on:  return "Auto-switch sets"
-        case .off: return "Manual only"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .on:  return "Automatically switches the active set on schedule"
-        case .off: return "Set switching requires manual selection"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .on:  return "clock.badge.checkmark"
-        case .off: return "clock.badge.xmark"
-        }
-    }
-
-    var autoSwitchesSets: Bool { self == .on }
-}
+// MARK: - EntryMode
 
 enum EntryMode: String, CaseIterable, Codable {
     case prospective   // Tap = "I'm starting this now"
@@ -206,21 +178,15 @@ final class ActivitySet {
     var name:         String
     var isActive:     Bool
     var createdAt:    Date
-    var entryModeRaw: String = "prospective"
-
-    var entryMode: EntryMode {
-        get { EntryMode(rawValue: entryModeRaw) ?? .prospective }
-        set { entryModeRaw = newValue.rawValue }
-    }
 
     @Relationship var activities: [Activity] = []
 
-    init(name: String, isActive: Bool = false, entryMode: EntryMode = .prospective) {
+    // Removed entryMode parameter and variables
+    init(name: String, isActive: Bool = false) {
         self.id           = UUID()
         self.name         = name
         self.isActive     = isActive
         self.createdAt    = Date()
-        self.entryModeRaw = entryMode.rawValue
     }
 }
 
@@ -236,15 +202,9 @@ final class TimeBlockRule {
     var isEnabled:       Bool
     var daysOfWeek:      [Int]
     var createdAt:       Date
-    var trackingModeRaw: String
-
-    var trackingMode: TrackingMode {
-        get { TrackingMode(rawValue: trackingModeRaw) ?? .on }
-        set { trackingModeRaw = newValue.rawValue }
-    }
 
     init(name: String, startTime: Date, endTime: Date, linkedSetID: UUID? = nil,
-         daysOfWeek: [Int] = [], trackingMode: TrackingMode = .on) {
+         daysOfWeek: [Int] = []) {
         self.id              = UUID()
         self.name            = name
         self.startTime       = startTime
@@ -253,7 +213,6 @@ final class TimeBlockRule {
         self.isEnabled       = true
         self.daysOfWeek      = daysOfWeek
         self.createdAt       = Date()
-        self.trackingModeRaw = trackingMode.rawValue
     }
 
     func isActiveNow() -> Bool {
@@ -291,8 +250,6 @@ final class TimeBlockRule {
 
 extension TimeBlockRule {
     func covers(timeRange: ClosedRange<Date>) -> Bool {
-        // Only checking "Paused" rules
-        guard trackingMode == .off else { return false }
         
         let calendar = Calendar.current
         let gapStart = timeRange.lowerBound
@@ -304,9 +261,7 @@ extension TimeBlockRule {
         
         let gapStartMins = calendar.component(.hour, from: gapStart) * 60 + calendar.component(.minute, from: gapStart)
         
-        // Simple check: Does the gap START inside the rule?
-        // (A more robust check would handle wrapping past midnight)
-        if ruleEndMins < ruleStartMins { // Rule wraps over midnight (e.g. 10PM - 7AM)
+        if ruleEndMins < ruleStartMins {
             return gapStartMins >= ruleStartMins || gapStartMins < ruleEndMins
         } else {
             return gapStartMins >= ruleStartMins && gapStartMins < ruleEndMins

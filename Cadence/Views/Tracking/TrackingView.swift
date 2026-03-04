@@ -17,7 +17,9 @@ struct TrackingView: View {
 
     @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     @State private var showingQuickRemark = false
+    @State private var remarkTargetBlock: TimeBlock?
     @State private var showingIntention  = false
+    @State private var showingNoActivityAlert = false
 
     var activeSet: ActivitySet? { activitySets.first { $0.isActive } }
 
@@ -67,7 +69,10 @@ struct TrackingView: View {
                         onPause:  { manager.handlePauseTap() },
                         onStop:   { manager.handleStopTap() },
                         onResume: { manager.handleResumeTap() },
-                        onQuickRemark: { showingQuickRemark = true },
+                        onQuickRemark: {
+                            remarkTargetBlock = manager.currentTimeBlock
+                            showingQuickRemark = true
+                        },
                         onSetTarget: { target in
                             if let currentBlock = manager.currentTimeBlock {
                                 manager.setTargetDuration(for: currentBlock, duration: target)
@@ -81,28 +86,35 @@ struct TrackingView: View {
                         hasAnchor: manager.retrospectiveAnchorTime != nil,
                         onPause:  { manager.handlePauseTap() },
                         onResume: { manager.handleResumeTap() },
-                        onDiscard: { manager.handleStopTap() }
+                        onDiscard: { manager.handleStopTap() },
+                        onQuickRemark: {
+                            if let lastBlock = manager.getLastCompletedBlock() {
+                                remarkTargetBlock = lastBlock
+                                showingQuickRemark = true
+                            } else {
+                                // Trigger the alert if no block is found
+                                showingNoActivityAlert = true
+                            }
+                        }
                     )
                 }
 
                 // Set Picker & Mode Indicator
                 if activitySets.count > 1 {
                     HStack {
-                        ActivitySetPicker(sets: activitySets)
+                        ActivitySetPicker(sets: activitySets, manager: manager)
                         
-                        // Mode badge
-                        Label(
-                            manager.currentEntryMode.displayName,
-                            systemImage: manager.currentEntryMode.icon
-                        )
-                        .font(.caption2).fontWeight(.medium)
-                        .foregroundStyle(manager.currentEntryMode == .retrospective ? .orange : .blue)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(
-                            (manager.currentEntryMode == .retrospective ? Color.orange : Color.blue)
-                                .opacity(0.12)
-                        )
-                        .cornerRadius(6)
+                        // Mode badge/picker
+                        Picker("Mode", selection: Binding(
+                            get: { manager.currentEntryMode },
+                            set: { manager.toggleEntryMode(to: $0) }
+                        )) {
+                            ForEach(EntryMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 150)
                     }
                     .padding(.horizontal)
                 }
@@ -142,13 +154,19 @@ struct TrackingView: View {
             // Handled automatically by idle timer updates
         }
         .sheet(isPresented: $showingQuickRemark) {
-            if let block = manager.currentTimeBlock {
+            if let block = remarkTargetBlock {
                 QuickRemarkSheet(timeBlock: block)
             }
         }
         .sheet(isPresented: $showingIntention) {
             IntentionSheet(existingNote: todayNote)
                 .presentationDetents([.medium])
+        }
+        
+        .alert("No Previous Activity", isPresented: $showingNoActivityAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("You need to log at least one activity before you can attach a retrospective remark to it.")
         }
     }
 }
@@ -162,6 +180,7 @@ struct RetrospectiveCard: View {
     let onPause: () -> Void
     let onResume: () -> Void
     let onDiscard: () -> Void
+    let onQuickRemark: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -226,6 +245,14 @@ struct RetrospectiveCard: View {
                     .tint(.red)
                 }
                 .padding(.top, 8)
+                
+                Button(action: onQuickRemark) {
+                    Label("Quick Remark (Previous)", systemImage: "note.text.badge.plus")
+                        .font(.subheadline).fontWeight(.medium)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.blue)
             }
         }
         .padding()
@@ -695,18 +722,18 @@ struct ActivityButton: View {
     }
 }
 
-// MARK: - Activity Set Picker (unchanged)
+// MARK: - Activity Set Picker
 
 struct ActivitySetPicker: View {
     let sets: [ActivitySet]
-    @Environment(\.modelContext) private var modelContext
+    let manager: TimeTrackingManager  // NEW: Pass the manager in
 
     var activeSet: ActivitySet? { sets.first(where: { $0.isActive }) }
 
     var body: some View {
         Menu {
             ForEach(sets) { set in
-                Button { selectSet(set) } label: {
+                Button { manager.manualSwitchToSet(set) } label: { // UPDATED Action
                     HStack {
                         Text(set.name)
                         if set.isActive { Image(systemName: "checkmark") }
@@ -724,10 +751,5 @@ struct ActivitySetPicker: View {
             .frame(maxWidth: .infinity)
             .background(Color(.systemGray6)).cornerRadius(10)
         }
-    }
-
-    private func selectSet(_ set: ActivitySet) {
-        for s in sets { s.isActive = (s.id == set.id) }
-        try? modelContext.save()
     }
 }

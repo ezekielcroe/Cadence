@@ -75,11 +75,6 @@ struct SettingsView: View {
 
                 // MARK: - Tracking Behavior
                 Section {
-                    NavigationLink {
-                        DefaultTrackingModeView()
-                    } label: {
-                        Label("Default Tracking Mode", systemImage: "clock.badge.questionmark")
-                    }
 
                     NavigationLink {
                         BackgroundTrackingView()
@@ -216,72 +211,6 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-}
-
-// MARK: - Default Tracking Mode View
-
-struct DefaultTrackingModeView: View {
-    @AppStorage("defaultTrackingMode") private var defaultTrackingModeRaw: String = TrackingMode.on.rawValue
-
-    var body: some View {
-        Form {
-            Section {
-                Text("Controls whether Cadence actively tracks time and creates gaps for unlogged periods. When off, the timer is paused and no gaps are recorded.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Toggle("Enable Tracking by Default", isOn: Binding(
-                    get: { defaultTrackingModeRaw == TrackingMode.on.rawValue },
-                    set: { newValue in
-                        defaultTrackingModeRaw = newValue ? TrackingMode.on.rawValue : TrackingMode.off.rawValue
-                    }
-                ))
-            } header: {
-                Text("Default Mode")
-            } footer: {
-                Text("This applies when no scheduled time block rule is active. Scheduled rules can override this.")
-            }
-
-            Section {
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("How Tracking Works", systemImage: "info.circle")
-                        .font(.headline)
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .top) {
-                            Image(systemName: "clock.badge.checkmark")
-                                .foregroundStyle(.blue)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Tracking On").fontWeight(.medium)
-                                Text("Records activities. Gaps between activities are shown in your timeline. Scheduled rules can auto-switch your active set.")
-                                    .font(.caption)
-                            }
-                        }
-
-                        HStack(alignment: .top) {
-                            Image(systemName: "clock.badge.xmark")
-                                .foregroundStyle(.gray)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Tracking Off").fontWeight(.medium)
-                                Text("Timer is paused. No activities or gaps are recorded. Use for sleep, downtime, or when you don't want accountability pressure.")
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            } header: {
-                Text("About Tracking Modes")
-            }
-        }
-        .navigationTitle("Default Tracking Mode")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

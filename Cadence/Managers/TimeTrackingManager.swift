@@ -36,7 +36,10 @@ class TimeTrackingManager: ObservableObject {
     @Published var retrospectivePauseStart: Date?
 
     private var backgroundEnteredTime: Date?
-    private(set) var maxBackgroundDuration: TimeInterval = 900   // 15 min default
+    var maxBackgroundDuration: TimeInterval {
+        let saved = UserDefaults.standard.double(forKey: "maxBackgroundDuration")
+        return saved > 0 ? saved : 900 // Default to 15 mins (900 seconds)
+    }
 
     /// Maximum pause duration before the activity is auto-stopped. (15 min)
     private let maxPauseDuration: TimeInterval = 900
@@ -47,8 +50,8 @@ class TimeTrackingManager: ObservableObject {
     }
     
     /// The entry mode of the currently active set.
-    var currentEntryMode: EntryMode {
-        activeSet?.entryMode ?? .prospective
+    @Published var currentEntryMode: EntryMode = .prospective {
+        didSet { UserDefaults.standard.set(currentEntryMode.rawValue, forKey: "savedEntryMode") }
     }
     
     /// Elapsed unlabeled time in retrospective mode.
@@ -75,6 +78,9 @@ class TimeTrackingManager: ObservableObject {
         if UserDefaults.standard.object(forKey: "notificationsEnabled") == nil {
             notificationsEnabled = true
         }
+        
+        let savedMode = UserDefaults.standard.string(forKey: "savedEntryMode") ?? EntryMode.prospective.rawValue
+        self.currentEntryMode = EntryMode(rawValue: savedMode) ?? .prospective
 
         loadSettings()
         loadRetrospectiveState()
@@ -87,17 +93,9 @@ class TimeTrackingManager: ObservableObject {
     // MARK: - Settings
 
     private func loadSettings() {
-        let saved = UserDefaults.standard.double(forKey: "maxBackgroundDuration")
-        if saved > 0 { maxBackgroundDuration = saved }
-
         if let ts = UserDefaults.standard.object(forKey: "backgroundEnteredTime") as? Double {
             backgroundEnteredTime = Date(timeIntervalSince1970: ts)
         }
-    }
-
-    func saveMaxBackgroundDuration(_ duration: TimeInterval) {
-        maxBackgroundDuration = duration
-        UserDefaults.standard.set(duration, forKey: "maxBackgroundDuration")
     }
 
     private func saveBackgroundState() {
@@ -126,16 +124,58 @@ class TimeTrackingManager: ObservableObject {
 
     // MARK: - Set Auto-Switching
 
-    var shouldAutoSwitchSets: Bool {
-        getActiveTimeBlockRule()?.trackingMode.autoSwitchesSets ?? false
-    }
-
     func getActiveTimeBlockRule() -> TimeBlockRule? {
         let descriptor = FetchDescriptor<TimeBlockRule>(
             sortBy: [SortDescriptor(\.startTime, order: .forward)]
         )
         guard let rules = try? modelContext.fetch(descriptor) else { return nil }
         return rules.first(where: { $0.isActiveNow() })
+    }
+    
+    /// Called by the UI when the user manually picks a new set from the dropdown.
+    func manualSwitchToSet(_ set: ActivitySet) {
+        executeSetSwitch(to: set)
+    }
+
+    /// The core engine for changing the active set and handling mode transitions.
+    private func executeSetSwitch(to targetSet: ActivitySet) {
+        let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
+        sets?.forEach { $0.isActive = false }
+        targetSet.isActive = true
+        activeSet = targetSet
+        saveContext()
+    }
+    
+    func toggleEntryMode(to newMode: EntryMode) {
+        let previousMode = currentEntryMode
+        guard previousMode != newMode else { return }
+
+        currentEntryMode = newMode
+
+        if previousMode == .prospective && newMode == .retrospective {
+            let anchorTime: Date
+            if let current = currentTimeBlock, current.endTime == nil {
+                let now = Date()
+                if current.isPaused { closePause(on: current, at: now) }
+                current.endTime = now
+                current.stopState = "switched"
+                currentTimeBlock = nil
+                anchorTime = now
+                cancelTargetAlarm()
+            } else {
+                anchorTime = Date()
+            }
+            startRetrospectiveAnchor(at: anchorTime)
+
+        } else if previousMode == .retrospective && newMode == .prospective {
+            clearRetrospectiveAnchor()
+        }
+
+        if newMode == .retrospective && retrospectiveAnchorTime == nil {
+            startRetrospectiveAnchor(at: Date())
+        }
+
+        updateIdleTimerState()
     }
 
     // MARK: - Unified Activity Management Handlers
@@ -291,6 +331,16 @@ class TimeTrackingManager: ObservableObject {
         clearRetrospectiveState()
         retrospectiveIsPaused = false
         retrospectivePauseStart = nil
+    }
+    
+    func getLastCompletedBlock() -> TimeBlock? {
+        let descriptor = FetchDescriptor<TimeBlock>(
+            predicate: #Predicate { $0.endTime != nil },
+            sortBy: [SortDescriptor(\.endTime, order: .reverse)]
+        )
+        var fetchDescriptor = descriptor
+        fetchDescriptor.fetchLimit = 1
+        return try? modelContext.fetch(fetchDescriptor).first
     }
 
     // MARK: - Target Alarm Notification
@@ -673,14 +723,14 @@ class TimeTrackingManager: ObservableObject {
     }
 
     // MARK: - Time Block Rule Application
-
+    
     func checkAndApplyCurrentTimeBlockRule() {
         let activeRule = getActiveTimeBlockRule()
         let previousRule = currentTimeBlockRule
         currentTimeBlockRule = activeRule
 
+        // Automatically switch if the rule is active and it's a new rule
         guard let rule = activeRule,
-              rule.trackingMode.autoSwitchesSets,
               let setID = rule.linkedSetID,
               previousRule?.id != rule.id else { return }
 
@@ -689,12 +739,14 @@ class TimeTrackingManager: ObservableObject {
 
         if currentActiveSet?.id != setID,
            let targetSet = sets?.first(where: { $0.id == setID }) {
-            switchToActivitySet(targetSet, ruleName: rule.name)
+            
+            // This safely transitions the modes!
+            executeSetSwitch(to: targetSet)
+            notifySetSwitch(setName: targetSet.name, ruleName: rule.name)
         }
     }
 
     private func switchToActivitySet(_ set: ActivitySet, ruleName: String) {
-        let previousMode = currentEntryMode
         let sets = try? modelContext.fetch(FetchDescriptor<ActivitySet>())
         
         sets?.forEach { $0.isActive = false }
@@ -702,34 +754,6 @@ class TimeTrackingManager: ObservableObject {
         activeSet = set
         saveContext()
         notifySetSwitch(setName: set.name, ruleName: ruleName)
-        
-        // Handle mode transition
-        let newMode = set.entryMode
-
-        if previousMode == .prospective && newMode == .retrospective {
-            // Auto-stop the prospective block; anchor retrospective from its end
-            let anchorTime: Date
-            if let current = currentTimeBlock, current.endTime == nil {
-                let now = Date()
-                if current.isPaused { closePause(on: current, at: now) }
-                current.endTime = now
-                current.stopState = "switched"
-                currentTimeBlock = nil
-                anchorTime = now
-                cancelTargetAlarm()
-            } else {
-                anchorTime = Date()
-            }
-            startRetrospectiveAnchor(at: anchorTime)
-
-        } else if previousMode == .retrospective && newMode == .prospective {
-            // Discard any unlabeled retrospective time
-            clearRetrospectiveAnchor()
-
-        } else if previousMode == .retrospective && newMode == .retrospective {
-            // Switching between two retrospective sets — keep the anchor running
-        }
-
         updateIdleTimerState()
     }
     

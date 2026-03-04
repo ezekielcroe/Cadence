@@ -1,25 +1,5 @@
 // TimelineListView.swift
 // Cadence
-//
-//
-// Each day reads top-to-bottom as a single continuous page:
-//   🌙 Reflection
-//   18:30  ■ Activity          45m
-//         › remark text       #tag
-//   9:30  ■ Activity        2h 15m
-//         › remark            #tag
-//   9:15  ┊ 15m untracked    [fill]
-//   8:30  ■ Activity          45m
-//   ☀️ Intention
-//
-// Key changes from original:
-// - Reverse Chronological order (Latest first)
-// - Remarks are ALWAYS visible inline, not hidden behind badges
-// - Gaps are quiet dashed spacers, not angry orange alerts
-// - Intention/reflection bookends are integrated, not on a separate tab
-// - One-tap gap fill with recent activity chips (no GapResolverSheet)
-// - Minimal state: no gap overview mode, no visual timeline toggle
-// - List separators removed for continuous flow
 
 import SwiftUI
 import SwiftData
@@ -42,11 +22,12 @@ struct TimelineListView: View {
     let selectedActivity: String?
     let selectedTag: String?
     let showArchived: Bool
-    let gapOverviewMode: Bool // FIX: Now captured locally
+    let gapOverviewMode: Bool
 
     // Undo support & Gap routing
     var onDeleteBlock: ((TimeBlock) -> Void)?
     var onFillGap: ((ComputedGap) -> Void)?
+    var onNoteTap: ((Date) -> Void)? // NEW: Callback for RecordsView routing
 
     // Local state
     @State private var inlineRemarkBlockID: UUID?
@@ -79,7 +60,8 @@ struct TimelineListView: View {
         showArchived: Bool,
         gapOverviewMode: Bool = false,
         onDeleteBlock: ((TimeBlock) -> Void)? = nil,
-        onFillGap: ((ComputedGap) -> Void)? = nil
+        onFillGap: ((ComputedGap) -> Void)? = nil,
+        onNoteTap: ((Date) -> Void)? = nil // NEW
     ) {
         _selectedBlock = selectedBlock
         _isSelectionMode = isSelectionMode
@@ -90,6 +72,7 @@ struct TimelineListView: View {
         self.gapOverviewMode = gapOverviewMode
         self.onDeleteBlock = onDeleteBlock
         self.onFillGap = onFillGap
+        self.onNoteTap = onNoteTap // NEW
 
         _blocks = Query(
             filter: #Predicate { block in
@@ -155,14 +138,13 @@ struct TimelineListView: View {
                     return isToday ? min(Date(), max(calEnd, latestEnd)) : max(calEnd, latestEnd)
                 }()
                 let effStart = overnightCoverageEnd(before: dayStart) ?? dayStart
-                gaps = GapCalculator.computeGaps(in: dayBlocks, rules: schedules, from: effStart, to: dayEnd)
+                gaps = GapCalculator.computeGaps(in: dayBlocks, from: effStart, to: dayEnd)
             }
 
             var items: [TimelineItem] = dayBlocks.map { .activity($0) }
             gaps.forEach { items.append(.gap($0)) }
             items.sort { $0.startTime > $1.startTime }
 
-            // FIX: Enforce gap overview filter
             if gapOverviewMode {
                 items = items.filter { if case .gap = $0 { return true } else { return false } }
             }
@@ -178,6 +160,18 @@ struct TimelineListView: View {
             return (label, dayStart, items)
         }
     }
+    
+    private func overnightCoverageEnd(before date: Date) -> Date? {
+        let descriptor = FetchDescriptor<TimeBlock>(
+            predicate: #Predicate { $0.startTime < date && $0.endTime != nil },
+            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+        )
+        guard let lastBlock = try? modelContext.fetch(descriptor).first,
+              let end = lastBlock.endTime, end > date else {
+            return nil
+        }
+        return end
+    }
 
     var body: some View {
         List {
@@ -190,7 +184,6 @@ struct TimelineListView: View {
                     dayHeader(page.label, date: page.date, items: page.items, isCollapsed: collapsedDayDates.contains(page.date))
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            // FIX: Added explicit smoothing animation for collapse
                             withAnimation(.easeInOut(duration: 0.25)) {
                                 if collapsedDayDates.contains(page.date) {
                                     collapsedDayDates.remove(page.date)
@@ -229,7 +222,6 @@ struct TimelineListView: View {
             
             Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
                 .font(.caption).foregroundStyle(.tertiary)
-            
             Spacer()
             if tracked > 0 {
                 Text(tracked.formattedDuration)
@@ -245,6 +237,7 @@ struct TimelineListView: View {
     }
 
     // MARK: - Day Page
+    
     @ViewBuilder
     private func dayPage(_ label: String, date: Date, items: [TimelineItem]) -> some View {
         let dayStart = Calendar.current.startOfDay(for: date)
@@ -256,11 +249,11 @@ struct TimelineListView: View {
                 icon: "moon.stars.fill", tint: .indigo, label: "Reflection",
                 text: note.reflection, time: note.reflectionUpdatedAt
             )
-            .onTapGesture { editingNoteType = .reflection(dayStart) }
+            .onTapGesture { onNoteTap?(dayStart) } // UPDATED: Uses callback to route
             .listRowBackground(Color.indigo.opacity(0.03))
         } else if isToday {
             bookendPlaceholder(icon: "moon.stars", tint: .indigo, text: "Write tonight's reflection…")
-                .onTapGesture { editingNoteType = .reflection(dayStart) }
+                .onTapGesture { editingNoteType = .reflection(dayStart) } // Empty ones still trigger local sheet
         }
 
         ForEach(items) { item in
@@ -284,11 +277,11 @@ struct TimelineListView: View {
                 icon: "sun.horizon.fill", tint: .orange, label: "Intention",
                 text: note.intention, time: note.intentionUpdatedAt
             )
-            .onTapGesture { editingNoteType = .intention(dayStart) }
+            .onTapGesture { onNoteTap?(dayStart) } // UPDATED: Uses callback to route
             .listRowBackground(Color.orange.opacity(0.03))
         } else if isToday {
             bookendPlaceholder(icon: "sun.horizon", tint: .orange, text: "Set today's intention…")
-                .onTapGesture { editingNoteType = .intention(dayStart) }
+                .onTapGesture { editingNoteType = .intention(dayStart) } // Empty ones still trigger local sheet
         }
     }
 
@@ -305,7 +298,6 @@ struct TimelineListView: View {
                 colorBar(hex: block.activityColor)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    // Title row
                     HStack(alignment: .firstTextBaseline) {
                         Text(block.activityName)
                             .font(.subheadline).fontWeight(.medium)
@@ -315,19 +307,16 @@ struct TimelineListView: View {
                                 .font(.caption2).foregroundStyle(.tertiary)
                                 .padding(.leading, 2)
                         }
-                        
                         Spacer()
                         Text(block.duration.formattedDuration)
                             .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     }
 
                     if isExpanded {
-                        // Expanded: truncated remark bullets
                         ForEach(blockRemarks) { remark in
                             remarkBullet(remark)
                         }
                     } else {
-                        // Collapsed: tags only
                         let allTags = Array(Set(blockRemarks.flatMap { $0.tags })).sorted()
                         if !allTags.isEmpty {
                             HStack(spacing: 4) {
@@ -348,14 +337,12 @@ struct TimelineListView: View {
             }
             .padding(.vertical, 5)
             .contentShape(Rectangle())
-            // FIX: Double-tap support to trigger inline remark field
             .onTapGesture(count: 2) {
                 withAnimation(.easeOut(duration: 0.15)) {
                     inlineRemarkBlockID = block.id; inlineRemarkText = ""
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { remarkFieldFocused = true }
             }
-            // Standard single tap
             .onTapGesture(count: 1) {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     if expandedActivityIDs.contains(block.id) {
@@ -460,7 +447,6 @@ struct TimelineListView: View {
     }
 
     // MARK: - Gap Spacer
-    // FIX: Simplified entirely to just trigger the 'Create new timeblock' bridge
     private func gapSpacer(_ gap: ComputedGap) -> some View {
         HStack(spacing: 0) {
             timeGutter(gap.start, muted: true)
@@ -515,12 +501,13 @@ struct TimelineListView: View {
                 Text(text)
                     .font(.subheadline)
                     .foregroundStyle(.primary.opacity(0.8))
-                    .fixedSize(horizontal: false, vertical: true)
+                    .lineLimit(3) // UPDATED: Enforce truncation here
             }
             Spacer()
         }
         .padding(.vertical, 5)
         .listRowSeparator(.hidden)
+        .contentShape(Rectangle()) // NEW: Make the whole row tappable
     }
 
     private func bookendPlaceholder(icon: String, tint: Color, text: String) -> some View {
@@ -576,23 +563,16 @@ struct TimelineListView: View {
         guard !text.isEmpty else { return }
         modelContext.insert(Remark(timeBlockID: block.id, text: text))
         try? modelContext.save()
-        expandedActivityIDs.insert(block.id)
-        withAnimation { inlineRemarkBlockID = nil; inlineRemarkText = "" }
+        inlineRemarkBlockID = nil
+        inlineRemarkText = ""
+        remarkFieldFocused = false
     }
 
     private func deleteBlock(_ block: TimeBlock) {
-        let date = block.startTime
-        for r in remarks where r.timeBlockID == block.id { modelContext.delete(r) }
+        let id = block.id
+        let blockRemarks = remarks.filter { $0.timeBlockID == id }
+        for r in blockRemarks { modelContext.delete(r) }
         modelContext.delete(block)
         try? modelContext.save()
-        HistoryManager.shared.invalidateDate(date, in: modelContext)
-    }
-
-    private func overnightCoverageEnd(before dayStart: Date) -> Date? {
-        let prev = Calendar.current.date(byAdding: .day, value: -1, to: dayStart)!
-        let desc = FetchDescriptor<TimeBlock>(
-            predicate: #Predicate { $0.startTime >= prev && $0.startTime < dayStart && $0.activityID != nil }
-        )
-        return (try? modelContext.fetch(desc))?.compactMap { $0.endTime }.filter { $0 > dayStart }.max()
     }
 }

@@ -32,59 +32,30 @@ struct ComputedGap: Identifiable {
 // MARK: - GapCalculator
 
 enum GapCalculator {
-
-    /// Computes all gaps within a time range from a set of activity blocks,
-    /// respecting "Paused" TimeBlockRules.
-    ///
-    /// - Parameters:
-    ///   - blocks:           The complete set of TimeBlocks for the range.
-    ///   - rules:            TimeBlockRules to check for "Paused" mode.
-    ///   - rangeStart:       The earliest time a gap could begin.
-    ///   - rangeEnd:         The latest time a gap could end.
-    ///   - minimumDuration:  Gaps shorter than this are excluded.
-    /// - Returns: Sorted array of ComputedGap values.
+    // 1. Simplify computeGaps
     static func computeGaps(
         in blocks: [TimeBlock],
-        rules: [TimeBlockRule] = [],
         from rangeStart: Date,
         to rangeEnd: Date,
         minimumDuration: TimeInterval = ComputedGap.minimumDisplayDuration
     ) -> [ComputedGap] {
-
         let rawGaps = calculateRawGaps(
             in: blocks,
             from: rangeStart,
             to: rangeEnd,
             minimumDuration: 0
         )
-
-        if rules.isEmpty {
-            return rawGaps.filter { $0.duration >= minimumDuration }
-        }
-
-        let pausedRanges = resolvePausedRanges(rules: rules, from: rangeStart, to: rangeEnd)
-        var finalGaps: [ComputedGap] = []
-
-        for gap in rawGaps {
-            let remaining = subtract(pausedRanges: pausedRanges, from: gap.start...gap.end)
-            for interval in remaining {
-                let duration = interval.upperBound.timeIntervalSince(interval.lowerBound)
-                if duration >= minimumDuration {
-                    finalGaps.append(ComputedGap(start: interval.lowerBound, end: interval.upperBound))
-                }
-            }
-        }
-        return finalGaps
+        // No more rules or paused range subtracting! Just filter by duration.
+        return rawGaps.filter { $0.duration >= minimumDuration }
     }
 
-    /// Total unaccounted duration within a range.
+    // 2. Simplify totalUnaccountedDuration
     static func totalUnaccountedDuration(
         in blocks: [TimeBlock],
-        rules: [TimeBlockRule] = [],
         from rangeStart: Date,
         to rangeEnd: Date
     ) -> TimeInterval {
-        computeGaps(in: blocks, rules: rules, from: rangeStart, to: rangeEnd, minimumDuration: 0)
+        computeGaps(in: blocks, from: rangeStart, to: rangeEnd, minimumDuration: 0)
             .reduce(0) { $0 + $1.duration }
     }
 
@@ -106,7 +77,7 @@ enum GapCalculator {
         let latestEnd    = blocks.compactMap { $0.endTime }.max() ?? cappedEnd
         let effectiveEnd = max(cappedEnd, min(latestEnd, Date()))
 
-        return computeGaps(in: blocks, rules: rules, from: dayStart, to: effectiveEnd).count
+        return computeGaps(in: blocks, from: dayStart, to: effectiveEnd).count
     }
 
     // MARK: - Private Helpers
@@ -179,7 +150,7 @@ enum GapCalculator {
         var ranges: [Range<Date>] = []
         let calendar = Calendar.current
 
-        let pausedRules = rules.filter { $0.isEnabled && $0.trackingMode == .off }
+        let pausedRules = rules.filter { $0.isEnabled }
         guard !pausedRules.isEmpty else { return [] }
 
         var currentDate = calendar.startOfDay(for: start)
