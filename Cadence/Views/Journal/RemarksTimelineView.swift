@@ -9,7 +9,7 @@ import SwiftData
 
 /// Groups day-level remark data into a calendar week for collapsible display.
 private struct WeekBucket: Identifiable {
-    let id: String
+    let id: String                  // e.g. "2026-W09"
     let weekStart: Date
     let weekEnd: Date
     let days: [DayBucket]
@@ -50,7 +50,7 @@ struct RemarksTimelineView: View {
     @State private var searchText = ""
     @State private var selectedTag: String? = nil
     @State private var expandedWeekIDs: Set<String>
-    @State private var editingNoteType: NoteEditType? // NEW: For edits
+    @State private var editingNoteType: NoteEditType?
 
     // Data
     @Query(sort: \Remark.timestamp, order: .reverse) private var allRemarks: [Remark]
@@ -65,7 +65,6 @@ struct RemarksTimelineView: View {
         Calendar.current.isDate(currentMonth, equalTo: Date(), toGranularity: .month)
     }
 
-    // NEW: Editing Identifier
     enum NoteEditType: Identifiable {
         case intention(Date), reflection(Date)
         var id: String {
@@ -76,7 +75,6 @@ struct RemarksTimelineView: View {
         }
     }
 
-    // NEW: Allow targeted deep linking
     init(initialDate: Date? = nil) {
         let dateToUse = initialDate ?? Date()
         _currentMonth = State(initialValue: dateToUse)
@@ -118,18 +116,16 @@ struct RemarksTimelineView: View {
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search all remarks…")
             .onChange(of: currentMonth) { _, _ in resetExpansion() }
-            .sheet(item: $editingNoteType) { type in // NEW: Sheet Presentation
+            .sheet(item: $editingNoteType) { type in
                 switch type {
                 case .intention(let d):
-                    if let note = allNotes.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
-                        IntentionSheet(existingNote: note)
-                            .presentationDetents([.medium])
-                    }
+                    let note = allNotes.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) })
+                    IntentionSheet(existingNote: note)
+                        .presentationDetents([.medium])
                 case .reflection(let d):
-                    if let note = allNotes.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) }) {
-                        ReflectionSheet(existingNote: note)
-                            .presentationDetents([.medium])
-                    }
+                    let note = allNotes.first(where: { Calendar.current.isDate($0.date, inSameDayAs: d) })
+                    ReflectionSheet(existingNote: note)
+                        .presentationDetents([.medium])
                 }
             }
         }
@@ -234,7 +230,6 @@ struct RemarksTimelineView: View {
         Dictionary(uniqueKeysWithValues: allBlocks.compactMap { ($0.id, $0) })
     }
 
-    /// Remarks filtered by tag, then scoped to the selected month.
     private var monthRemarks: [Remark] {
         let cal = Calendar.current
         let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: currentMonth))!
@@ -250,7 +245,6 @@ struct RemarksTimelineView: View {
         return tagFiltered.filter { $0.timestamp >= monthStart && $0.timestamp < monthEnd }
     }
 
-    /// Notes scoped to the selected month.
     private var monthNotes: [DayNote] {
         let cal = Calendar.current
         let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: currentMonth))!
@@ -258,7 +252,6 @@ struct RemarksTimelineView: View {
         return allNotes.filter { $0.date >= monthStart && $0.date < monthEnd }
     }
 
-    /// Build week buckets from month-scoped data.
     private var weekBuckets: [WeekBucket] {
         let cal = Calendar.current
         let lookup = blockLookup
@@ -268,20 +261,23 @@ struct RemarksTimelineView: View {
             uniquingKeysWith: { a, _ in a }
         )
 
-        // Group remarks by day
         let remarksByDay = Dictionary(grouping: monthRemarks) { cal.startOfDay(for: $0.timestamp) }
 
-        // Collect all relevant days (remarks + non-empty notes)
         var allDays = Set(remarksByDay.keys)
         if selectedTag == nil {
             for note in monthNotes where !note.intention.isEmpty || !note.reflection.isEmpty {
                 allDays.insert(cal.startOfDay(for: note.date))
             }
+            // NEW: Ensure "Today" is always generated if we are viewing the current month
+            let todayStart = cal.startOfDay(for: Date())
+            if cal.isDate(currentMonth, equalTo: todayStart, toGranularity: .month) {
+                allDays.insert(todayStart)
+            }
         }
 
-        // Build day buckets
         let dayBuckets: [DayBucket] = allDays.sorted(by: >).compactMap { dayStart in
             let rawRemarks = remarksByDay[dayStart] ?? []
+            let isToday = cal.isDateInToday(dayStart)
 
             let dayRemarks = rawRemarks.sorted { a, b in
                 let blockA = lookup[a.timeBlockID]
@@ -295,17 +291,17 @@ struct RemarksTimelineView: View {
             let note = notesByDay[dayStart]
 
             if selectedTag != nil && dayRemarks.isEmpty { return nil }
-            if dayRemarks.isEmpty && (note == nil || (note!.intention.isEmpty && note!.reflection.isEmpty)) { return nil }
+            // NEW: Do not drop "Today" even if empty
+            if dayRemarks.isEmpty && (note == nil || (note!.intention.isEmpty && note!.reflection.isEmpty)) && !isToday { return nil }
 
             let label: String
-            if cal.isDateInToday(dayStart) { label = "Today" }
+            if isToday { label = "Today" }
             else if cal.isDateInYesterday(dayStart) { label = "Yesterday" }
             else { label = dayStart.formatted(date: .abbreviated, time: .omitted) }
 
             return DayBucket(id: dayStart, label: label, remarks: dayRemarks, note: note)
         }
 
-        // Group day buckets by calendar week
         let byWeek = Dictionary(grouping: dayBuckets) { day -> Int in
             cal.component(.weekOfYear, from: day.id)
         }
@@ -317,7 +313,6 @@ struct RemarksTimelineView: View {
         return byWeek.keys.sorted(by: >).map { weekNum in
             let days = byWeek[weekNum]!.sorted { $0.id > $1.id }
 
-            // Compute the Monday (or locale week start) of this week
             var weekStartComps = DateComponents()
             weekStartComps.yearForWeekOfYear = year
             weekStartComps.weekOfYear = weekNum
@@ -326,7 +321,6 @@ struct RemarksTimelineView: View {
             let weekEnd = cal.date(byAdding: .day, value: 6, to: weekStart) ?? days.first!.id
 
             let isCurrent = (weekNum == currentWeekOfYear && year == currentYear)
-
             let weekID = "\(year)-W\(String(format: "%02d", weekNum))"
 
             return WeekBucket(
@@ -438,7 +432,6 @@ struct RemarksTimelineView: View {
     private func collapsedWeekRow(_ week: WeekBucket) -> some View {
         Button { toggleWeek(week) } label: {
             VStack(alignment: .leading, spacing: 6) {
-                // Summary line
                 HStack(spacing: 12) {
                     Label("\(week.remarkCount) remark\(week.remarkCount == 1 ? "" : "s")",
                           systemImage: "text.quote")
@@ -451,11 +444,9 @@ struct RemarksTimelineView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-
                     Spacer()
                 }
 
-                // Top tags preview
                 if !week.topTags.isEmpty {
                     HStack(spacing: 4) {
                         ForEach(week.topTags, id: \.self) { tag in
@@ -469,7 +460,6 @@ struct RemarksTimelineView: View {
                     }
                 }
 
-                // Day preview
                 let previewDays = week.days.prefix(2)
                 ForEach(previewDays) { day in
                     if let firstRemark = day.remarks.first {
@@ -517,11 +507,18 @@ struct RemarksTimelineView: View {
 
     @ViewBuilder
     private func dayContent(_ day: DayBucket) -> some View {
+        let isToday = Calendar.current.isDateInToday(day.id)
+
         // Reflection
-        if selectedTag == nil, let note = day.note, !note.reflection.isEmpty {
-            compactBookend(icon: "moon.stars.fill", tint: .indigo,
-                           label: "Reflection", text: note.reflection)
-                .onTapGesture { editingNoteType = .reflection(day.id) } // NEW: Edit access
+        if selectedTag == nil {
+            if let note = day.note, !note.reflection.isEmpty {
+                compactBookend(icon: "moon.stars.fill", tint: .indigo,
+                               label: "Reflection", text: note.reflection)
+                    .onTapGesture { editingNoteType = .reflection(day.id) }
+            } else if isToday {
+                compactBookendPlaceholder(icon: "moon.stars", tint: .indigo, text: "Write tonight's reflection…")
+                    .onTapGesture { editingNoteType = .reflection(day.id) }
+            }
         }
 
         // Remarks
@@ -534,10 +531,15 @@ struct RemarksTimelineView: View {
         }
 
         // Intention
-        if selectedTag == nil, let note = day.note, !note.intention.isEmpty {
-            compactBookend(icon: "sun.horizon.fill", tint: .orange,
-                           label: "Intention", text: note.intention)
-                .onTapGesture { editingNoteType = .intention(day.id) } // NEW: Edit access
+        if selectedTag == nil {
+            if let note = day.note, !note.intention.isEmpty {
+                compactBookend(icon: "sun.horizon.fill", tint: .orange,
+                               label: "Intention", text: note.intention)
+                    .onTapGesture { editingNoteType = .intention(day.id) }
+            } else if isToday {
+                compactBookendPlaceholder(icon: "sun.horizon", tint: .orange, text: "Set today's intention…")
+                    .onTapGesture { editingNoteType = .intention(day.id) }
+            }
         }
     }
 
@@ -601,12 +603,32 @@ struct RemarksTimelineView: View {
                     .font(.caption2).fontWeight(.semibold).foregroundStyle(tint.opacity(0.7))
                 Text(text)
                     .font(.subheadline).foregroundStyle(.primary.opacity(0.8))
-                    .fixedSize(horizontal: false, vertical: true) // NEW: Guarantee Full visibility
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.vertical, 3)
         .listRowBackground(tint.opacity(0.03))
-        .contentShape(Rectangle()) // NEW: Makes the entire white space block tappable
+        .contentShape(Rectangle())
+    }
+
+    // NEW: Compact Bookend Placeholder
+    private func compactBookendPlaceholder(icon: String, tint: Color, text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: icon)
+                .foregroundStyle(tint.opacity(0.3))
+                .font(.caption)
+                .padding(.top, 2)
+                .frame(width: 16)
+
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(.quaternary)
+                .padding(.top, 1)
+            
+            Spacer()
+        }
+        .padding(.vertical, 3)
+        .contentShape(Rectangle())
     }
 
     // MARK: - Empty State

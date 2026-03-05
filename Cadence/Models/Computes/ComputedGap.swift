@@ -223,7 +223,7 @@ enum GapCalculator {
     }
 }
 
-// MARK: - TimelineItem (unchanged)
+// MARK: - TimelineItem
 
 enum TimelineItem: Identifiable {
     case activity(TimeBlock)

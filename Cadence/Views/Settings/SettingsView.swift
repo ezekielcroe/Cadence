@@ -117,17 +117,25 @@ struct SettingsView: View {
                     HStack {
                         Text("Version")
                         Spacer()
-                        Text("1.0.0")
+                        Text("1.5.0")
                             .foregroundStyle(.secondary)
                     }
 
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 16) {
+                            
+                            tipRow(
+                                icon: "switch.2",
+                                tint: .blue,
+                                title: "Start & Log Modes",
+                                body: "Choose your tracking style from the Tracking tab. 'Start' mode begins a timer for what you are doing right now. 'Log' mode lets you catch up by retrospectively labeling the time since your last entry."
+                            )
+                            
                             tipRow(
                                 icon: "play.circle.fill",
                                 tint: .green,
-                                title: "Quick Start",
-                                body: "Tap any activity on the Tracking tab to start the clock. Tap a different activity to switch seamlessly — the previous one is saved automatically."
+                                title: "Quick Switching",
+                                body: "Tap any activity to start the clock or log a duration. Tap a different activity to switch seamlessly — the previous one is capped and saved automatically."
                             )
 
                             tipRow(
@@ -141,28 +149,28 @@ struct SettingsView: View {
                                 icon: "note.text",
                                 tint: .blue,
                                 title: "Remarks & Tags",
-                                body: "Add timestamped notes to any activity via Quick Remark. Use #hashtags to tag and categorize — then search and filter across all your remarks in the Search tab."
+                                body: "Add timestamped notes to your running activities, or attach them to previous ones in Log mode. Use #hashtags to categorize, then filter across all remarks in the Records tab."
                             )
 
                             tipRow(
                                 icon: "sun.horizon.fill",
                                 tint: .orange,
                                 title: "Intentions & Reflections",
-                                body: "Set a daily intention each morning and write a reflection each evening. These bookend your day in the Records timeline and help you stay aligned."
+                                body: "Set a daily intention each morning and write a reflection each evening. These bookend your day in the Records timeline and help you stay mindful."
                             )
 
                             tipRow(
                                 icon: "square.grid.2x2.fill",
                                 tint: .purple,
                                 title: "Activity Sets & Schedules",
-                                body: "Organize activities into sets (Work, Personal, etc.). Create schedules to auto-switch the active set on a timetable — Cadence will switch context for you."
+                                body: "Organize activities into palettes (Work, Personal, etc.). Create schedules to auto-switch the active set on a timetable so Cadence shows you the right activities at the right time."
                             )
 
                             tipRow(
-                                icon: "pencil.and.list.clipboard",
+                                icon: "hand.tap.fill",
                                 tint: .teal,
-                                title: "Edit Records",
-                                body: "Tap any block in Records to quick-edit its time or activity. Open the full editor to add remarks, view pause history, or split blocks. Adjacent blocks can be merged."
+                                title: "Manage Records",
+                                body: "In the Records timeline, long-press any block to edit its time, change the activity, or split it in two. Double-tap a block to quickly add an inline note."
                             )
 
                             tipRow(

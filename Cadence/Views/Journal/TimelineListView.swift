@@ -27,27 +27,16 @@ struct TimelineListView: View {
     // Undo support & Gap routing
     var onDeleteBlock: ((TimeBlock) -> Void)?
     var onFillGap: ((ComputedGap) -> Void)?
-    var onNoteTap: ((Date) -> Void)? // NEW: Callback for RecordsView routing
+    var onNoteTap: ((Date) -> Void)?
 
     // Local state
     @State private var inlineRemarkBlockID: UUID?
     @State private var inlineRemarkText = ""
-    @State private var editingNoteType: NoteEditType?
     @FocusState private var remarkFieldFocused: Bool
     
     // Interaction state
     @State private var expandedActivityIDs: Set<UUID> = []
     @State private var collapsedDayDates: Set<Date> = []
-
-    enum NoteEditType: Identifiable {
-        case intention(Date), reflection(Date)
-        var id: String {
-            switch self {
-            case .intention(let d): return "i-\(d.timeIntervalSince1970)"
-            case .reflection(let d): return "r-\(d.timeIntervalSince1970)"
-            }
-        }
-    }
 
     init(
         startDate: Date,
@@ -61,7 +50,7 @@ struct TimelineListView: View {
         gapOverviewMode: Bool = false,
         onDeleteBlock: ((TimeBlock) -> Void)? = nil,
         onFillGap: ((ComputedGap) -> Void)? = nil,
-        onNoteTap: ((Date) -> Void)? = nil // NEW
+        onNoteTap: ((Date) -> Void)? = nil
     ) {
         _selectedBlock = selectedBlock
         _isSelectionMode = isSelectionMode
@@ -72,7 +61,7 @@ struct TimelineListView: View {
         self.gapOverviewMode = gapOverviewMode
         self.onDeleteBlock = onDeleteBlock
         self.onFillGap = onFillGap
-        self.onNoteTap = onNoteTap // NEW
+        self.onNoteTap = onNoteTap
 
         _blocks = Query(
             filter: #Predicate { block in
@@ -198,16 +187,6 @@ struct TimelineListView: View {
             if dayPages.isEmpty { emptyState }
         }
         .listStyle(.plain)
-        .sheet(item: $editingNoteType) { type in
-            switch type {
-            case .intention(let d):
-                IntentionSheet(existingNote: noteByDay[Calendar.current.startOfDay(for: d)])
-                    .presentationDetents([.medium])
-            case .reflection(let d):
-                ReflectionSheet(existingNote: noteByDay[Calendar.current.startOfDay(for: d)])
-                    .presentationDetents([.medium])
-            }
-        }
     }
 
     // MARK: - Day Header
@@ -241,7 +220,6 @@ struct TimelineListView: View {
     @ViewBuilder
     private func dayPage(_ label: String, date: Date, items: [TimelineItem]) -> some View {
         let dayStart = Calendar.current.startOfDay(for: date)
-        let isToday = Calendar.current.isDateInToday(date)
         let note = noteByDay[dayStart]
 
         if let note, !note.reflection.isEmpty {
@@ -249,11 +227,8 @@ struct TimelineListView: View {
                 icon: "moon.stars.fill", tint: .indigo, label: "Reflection",
                 text: note.reflection, time: note.reflectionUpdatedAt
             )
-            .onTapGesture { onNoteTap?(dayStart) } // UPDATED: Uses callback to route
+            .onTapGesture { onNoteTap?(dayStart) }
             .listRowBackground(Color.indigo.opacity(0.03))
-        } else if isToday {
-            bookendPlaceholder(icon: "moon.stars", tint: .indigo, text: "Write tonight's reflection…")
-                .onTapGesture { editingNoteType = .reflection(dayStart) } // Empty ones still trigger local sheet
         }
 
         ForEach(items) { item in
@@ -277,11 +252,8 @@ struct TimelineListView: View {
                 icon: "sun.horizon.fill", tint: .orange, label: "Intention",
                 text: note.intention, time: note.intentionUpdatedAt
             )
-            .onTapGesture { onNoteTap?(dayStart) } // UPDATED: Uses callback to route
+            .onTapGesture { onNoteTap?(dayStart) }
             .listRowBackground(Color.orange.opacity(0.03))
-        } else if isToday {
-            bookendPlaceholder(icon: "sun.horizon", tint: .orange, text: "Set today's intention…")
-                .onTapGesture { editingNoteType = .intention(dayStart) } // Empty ones still trigger local sheet
         }
     }
 
@@ -501,24 +473,11 @@ struct TimelineListView: View {
                 Text(text)
                     .font(.subheadline)
                     .foregroundStyle(.primary.opacity(0.8))
-                    .lineLimit(3) // UPDATED: Enforce truncation here
+                    .lineLimit(3)
             }
             Spacer()
         }
         .padding(.vertical, 5)
-        .listRowSeparator(.hidden)
-        .contentShape(Rectangle()) // NEW: Make the whole row tappable
-    }
-
-    private func bookendPlaceholder(icon: String, tint: Color, text: String) -> some View {
-        HStack(spacing: 0) {
-            Spacer().frame(width: 52)
-            Image(systemName: icon)
-                .foregroundStyle(tint.opacity(0.25)).font(.caption2).frame(width: 19)
-            Text(text).font(.subheadline).foregroundStyle(.quaternary)
-            Spacer()
-        }
-        .padding(.vertical, 3)
         .listRowSeparator(.hidden)
         .contentShape(Rectangle())
     }
