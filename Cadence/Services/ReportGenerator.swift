@@ -241,16 +241,28 @@ class ReportGenerator {
     }
 
     // MARK: - Fragmentation Calculation
-
     private func calculateFragmentation(blocks: [TimeBlock]) -> FragmentationData {
         guard !blocks.isEmpty else {
             return FragmentationData(switchesPerHour: 0, averageBlockDuration: 0)
         }
-        let totalSwitches = Double(blocks.reduce(0) { $0 + $1.switchCount })
-        let totalHours    = calculateTotalDuration(blocks) / 3600
-        let switchesPerHr = totalHours > 0 ? totalSwitches / totalHours : 0
-        let avgBlock      = calculateTotalDuration(blocks) / Double(blocks.count)
-        return FragmentationData(switchesPerHour: switchesPerHr, averageBlockDuration: avgBlock)
+        
+        // 1. Calculate total interruptions (Switches + Pauses)
+        // Every new block is a switch, and every pause is an interruption.
+        let totalPauses = blocks.reduce(0) { $0 + $1.pauseCount }
+        let totalInterruptions = Double(blocks.count + totalPauses)
+        
+        // 2. Frequency of interruptions per hour
+        let totalHours = calculateTotalDuration(blocks) / 3600
+        let interruptionsPerHr = totalHours > 0 ? totalInterruptions / totalHours : 0
+        
+        // 3. Average focus segment duration
+        // We divide the total tracked time by the number of uninterrupted segments.
+        let avgBlock = calculateTotalDuration(blocks) / totalInterruptions
+        
+        return FragmentationData(
+            switchesPerHour: interruptionsPerHr,
+            averageBlockDuration: avgBlock
+        )
     }
 
     // MARK: - Tag Breakdown
