@@ -175,19 +175,20 @@ class ReportGenerator {
         let currentBlocks  = filterBlocks(blocks, in: currentRange)
         let previousBlocks = filterBlocks(blocks, in: previousRange)
 
-        // 3. Durations
-        let currentTotal = calculateTotalDuration(currentBlocks)
+        // 3. Durations — clamped to each range so cross-boundary blocks
+        //    only contribute the portion that falls within the period.
+        let currentTotal = calculateTotalDuration(currentBlocks, in: currentRange)
         let unaccountedTotal = GapCalculator.totalUnaccountedDuration(
             in: currentBlocks, from: currentRange.start, to: currentRange.end
         )
 
-        var previousTotal = calculateTotalDuration(previousBlocks)
+        var previousTotal = calculateTotalDuration(previousBlocks, in: previousRange)
         if isAverageComparison { previousTotal /= 7.0 }
 
         // 4. Activity breakdown
-        let breakdown = generateBreakdown(blocks: currentBlocks, totalDuration: currentTotal)
+        let breakdown = generateBreakdown(blocks: currentBlocks, totalDuration: currentTotal, in: currentRange)
 
-        var previousBreakdown = generateBreakdown(blocks: previousBlocks, totalDuration: 1)
+        var previousBreakdown = generateBreakdown(blocks: previousBlocks, totalDuration: 1, in: previousRange)
         if isAverageComparison {
             previousBreakdown = previousBreakdown.map {
                 Report.ActivityBreakdown(name: $0.name, duration: $0.duration / 7.0,
@@ -208,7 +209,7 @@ class ReportGenerator {
         )
 
         // 6. Fragmentation index
-        let fragmentation = calculateFragmentation(blocks: currentBlocks)
+        let fragmentation = calculateFragmentation(blocks: currentBlocks, in: currentRange)
 
         // 7. Tag breakdown (from remarks in current range)
         let currentBlockIDs = Set(currentBlocks.map { $0.id })
@@ -241,7 +242,7 @@ class ReportGenerator {
     }
 
     // MARK: - Fragmentation Calculation
-    private func calculateFragmentation(blocks: [TimeBlock]) -> FragmentationData {
+    private func calculateFragmentation(blocks: [TimeBlock], in range: (start: Date, end: Date)) -> FragmentationData {
         guard !blocks.isEmpty else {
             return FragmentationData(switchesPerHour: 0, averageBlockDuration: 0)
         }
@@ -252,12 +253,12 @@ class ReportGenerator {
         let totalInterruptions = Double(blocks.count + totalPauses)
         
         // 2. Frequency of interruptions per hour
-        let totalHours = calculateTotalDuration(blocks) / 3600
+        let totalHours = calculateTotalDuration(blocks, in: range) / 3600
         let interruptionsPerHr = totalHours > 0 ? totalInterruptions / totalHours : 0
         
         // 3. Average focus segment duration
         // We divide the total tracked time by the number of uninterrupted segments.
-        let avgBlock = calculateTotalDuration(blocks) / totalInterruptions
+        let avgBlock = calculateTotalDuration(blocks, in: range) / totalInterruptions
         
         return FragmentationData(
             switchesPerHour: interruptionsPerHr,
@@ -326,6 +327,33 @@ class ReportGenerator {
 
     // MARK: - Helpers
 
+    /// Returns the portion of a block's active duration that falls within the given range.
+    /// Blocks that merely overlap the range are clamped so only the intersecting
+    /// segment is counted — this prevents a single cross-midnight block from
+    /// inflating a day's total beyond 24 hours.
+    private func clampedDuration(of block: TimeBlock, in range: (start: Date, end: Date)) -> TimeInterval {
+        let blockStart = block.startTime
+        let blockEnd   = block.endTime ?? Date()
+
+        // Clamp to the portion that actually falls within the report range
+        let effectiveStart = max(blockStart, range.start)
+        let effectiveEnd   = min(blockEnd,   range.end)
+
+        guard effectiveEnd > effectiveStart else { return 0 }
+
+        let clampedRaw = effectiveEnd.timeIntervalSince(effectiveStart)
+
+        // Proportionally scale down the pause duration.
+        // If only half the block falls within the range, assume roughly half
+        // the pause time belongs to this side. This is a reasonable heuristic
+        // because we don't store individual pause timestamps.
+        let fullRaw = blockEnd.timeIntervalSince(blockStart)
+        let overlapRatio = fullRaw > 0 ? clampedRaw / fullRaw : 1.0
+        let scaledPause  = block.totalPauseDuration * overlapRatio
+
+        return max(0, clampedRaw - scaledPause)
+    }
+
     private func filterBlocks(_ blocks: [TimeBlock], in range: (start: Date, end: Date)) -> [TimeBlock] {
         blocks.filter { block in
             guard block.activityID != nil else { return false }
@@ -335,15 +363,16 @@ class ReportGenerator {
         }
     }
 
-    private func calculateTotalDuration(_ blocks: [TimeBlock]) -> TimeInterval {
-        blocks.reduce(0) { $0 + $1.duration }
+    private func calculateTotalDuration(_ blocks: [TimeBlock], in range: (start: Date, end: Date)) -> TimeInterval {
+        blocks.reduce(0) { $0 + clampedDuration(of: $1, in: range) }
     }
 
-    private func generateBreakdown(blocks: [TimeBlock], totalDuration: TimeInterval) -> [Report.ActivityBreakdown] {
+    private func generateBreakdown(blocks: [TimeBlock], totalDuration: TimeInterval, in range: (start: Date, end: Date)) -> [Report.ActivityBreakdown] {
         var dict: [String: (duration: TimeInterval, color: String)] = [:]
         for block in blocks {
+            let d = clampedDuration(of: block, in: range)
             let existing = dict[block.activityName]
-            dict[block.activityName] = ((existing?.duration ?? 0) + block.duration, block.activityColor)
+            dict[block.activityName] = ((existing?.duration ?? 0) + d, block.activityColor)
         }
         return dict
             .map { name, value in
