@@ -58,11 +58,10 @@ struct SearchListView: View {
             if matches.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {
-                Section(header: Text("\(matches.count) Result\(matches.count == 1 ? "" : "s")")) {
+                Section(header: Text("\(matches.count) note\(matches.count == 1 ? "" : "s")")) {
                     ForEach(matches) { remark in
-                        // Reusing your existing row component
-                        // We wrap it in a link to jump to that day (future enhancement)
-                        // For now, just showing the context is enough.
+                        // Step 5: a result opens its entry.
+                        NavigationLink(value: EntryRoute(blockID: remark.timeBlockID)) {
                         VStack(alignment: .leading, spacing: 6) {
                             
                             // Context Header (Date + Activity)
@@ -111,13 +110,12 @@ struct SearchListView: View {
                             }
                         }
                         .padding(.vertical, 4)
+                        }
                     }
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Search")
-        .navigationBarTitleDisplayMode(.inline)
         .onAppear { populateBlockCache() }
         .onChange(of: matches.count) { _, _ in populateBlockCache() }
     }

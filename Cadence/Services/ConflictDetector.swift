@@ -1,12 +1,14 @@
-// ============================================================
-// FILE: Cadence/Managers/state/ConflictDetector.swift
-// FULL REPLACEMENT
-// Changes:
-//   - Removed .exceedsDayBoundary from TimeConflict enum
-//   - Removed the calendar.isDate(inSameDayAs:) check from validateEdit()
-//   - Updated findOverlappingBlocks to search a 48-hour window so it catches
-//     blocks that a cross-midnight block might collide with on the next day
-// ============================================================
+//
+//  ConflictDetector.swift
+//  Cadence
+//
+//  Changes in this revision:
+//  - findGaps/unresolvedGapCount are thin calls into LedgerBuilder.
+//    The private overnight-coverage logic is gone; the ledger owns it.
+//  - findOverlappingBlocks queries by interval overlap against the
+//    proposed range directly. The old 48-hour start-based window missed
+//    any long block that started before the window and extended into it.
+//
 
 import Foundation
 import SwiftData
@@ -89,28 +91,17 @@ class ConflictDetector {
     func validateEdit(block: TimeBlock, newStart: Date, newEnd: Date) -> ValidationResult {
         var conflicts: [TimeConflict] = []
 
-        // Basic sanity checks
         if newEnd <= newStart { conflicts.append(.endBeforeStart) }
         if newEnd.timeIntervalSince(newStart) <= 0 { conflicts.append(.zeroOrNegativeDuration) }
 
-        // NOTE: Cross-midnight blocks are explicitly allowed.
-        // No exceedsDayBoundary check.
+        // Cross-midnight blocks are explicitly allowed.
 
         if conflicts.contains(where: { $0.severity == .blocking }) {
             return ValidationResult(isValid: false, conflicts: conflicts, canProceedWithConfirmation: false)
         }
 
-        // Search a 48-hour window centred on the start day so we catch both
-        // blocks on the start day and any block on the following day that an
-        // overnight block could collide with.
-        let calendar = Calendar.current
-        let searchStart = calendar.startOfDay(for: newStart)
-        let searchEnd   = calendar.date(byAdding: .day, value: 2, to: searchStart)!
-
         let overlaps = findOverlappingBlocks(
             excluding: block.id,
-            from: searchStart,
-            to: searchEnd,
             proposedStart: newStart,
             proposedEnd: newEnd
         )
@@ -142,34 +133,10 @@ class ConflictDetector {
         )
     }
 
-    // MARK: - Gap Detection
+    // MARK: - Gap Detection (ledger-backed)
 
     func findGaps(for date: Date) -> [ComputedGap] {
-        let calendar = Calendar.current
-        let dayStart = calendar.startOfDay(for: date)
-
-        // Fetch blocks that START on this day
-        let endOfFetch = calendar.date(byAdding: .day, value: 2, to: dayStart)!
-        let descriptor = FetchDescriptor<TimeBlock>(
-            predicate: #Predicate { block in
-                block.startTime >= dayStart &&
-                block.startTime < endOfFetch &&
-                block.activityID != nil
-            },
-            sortBy: [SortDescriptor(\.startTime)]
-        )
-        let dayBlocks = (try? modelContext.fetch(descriptor)) ?? []
-
-        // Effective range end: the later of calendar midnight or last block end
-        let calendarEnd  = min(calendar.date(byAdding: .day, value: 1, to: dayStart)!, Date())
-        let lastBlockEnd = dayBlocks.compactMap { $0.endTime }.max() ?? calendarEnd
-        let effectiveEnd = max(calendarEnd, lastBlockEnd)
-
-        // Effective range start: if an overnight block from the previous day bleeds
-        // into today, don't report a gap during those covered hours.
-        let effectiveStart = overnightCoverageEnd(before: dayStart) ?? dayStart
-
-        return GapCalculator.computeGaps(in: dayBlocks, from: effectiveStart, to: effectiveEnd)
+        LedgerBuilder.makeLedger(for: date, context: modelContext).gaps
     }
 
     func unresolvedGapCount(for date: Date = Date()) -> Int {
@@ -178,52 +145,24 @@ class ConflictDetector {
 
     // MARK: - Private Helpers
 
-    /// Returns the endTime of any block that started on the previous day and
-    /// ends on `dayStart` or later, i.e. an overnight block that covers the
-    /// beginning of `dayStart`. Returns nil if no such block exists.
-    private func overnightCoverageEnd(before dayStart: Date) -> Date? {
-        let calendar      = Calendar.current
-        let prevDayStart  = calendar.date(byAdding: .day, value: -1, to: dayStart)!
-
-        let descriptor = FetchDescriptor<TimeBlock>(
-            predicate: #Predicate { block in
-                block.startTime >= prevDayStart &&
-                block.startTime < dayStart &&
-                block.activityID != nil
-            },
-            sortBy: [SortDescriptor(\.startTime)]
-        )
-        guard let prevBlocks = try? modelContext.fetch(descriptor) else { return nil }
-
-        // Find the latest endTime among previous-day blocks that crosses into today
-        return prevBlocks
-            .compactMap { $0.endTime }
-            .filter { $0 > dayStart }
-            .max()
-    }
-
+    /// Exact interval-overlap query against the proposed range. A block
+    /// overlaps [proposedStart, proposedEnd) iff it starts before the end
+    /// and (its end, or infinity if ongoing) is after the start.
     private func findOverlappingBlocks(
         excluding blockID: UUID,
-        from rangeStart: Date,
-        to rangeEnd: Date,
         proposedStart: Date,
         proposedEnd: Date
     ) -> [TimeBlock] {
+        let distantFuture = Date.distantFuture
         let descriptor = FetchDescriptor<TimeBlock>(
             predicate: #Predicate { block in
                 block.id != blockID &&
-                block.activityID != nil &&
-                block.startTime >= rangeStart &&
-                block.startTime < rangeEnd
+                block.startTime < proposedEnd &&
+                (block.endTime ?? distantFuture) > proposedStart
             },
             sortBy: [SortDescriptor(\.startTime)]
         )
-
-        guard let blocks = try? modelContext.fetch(descriptor) else { return [] }
-        return blocks.filter { block in
-            let blockEnd = block.endTime ?? Date()
-            return proposedStart < blockEnd && proposedEnd > block.startTime
-        }
+        return (try? modelContext.fetch(descriptor)) ?? []
     }
 
     private func deduplicateConflicts(_ conflicts: [TimeConflict]) -> [TimeConflict] {

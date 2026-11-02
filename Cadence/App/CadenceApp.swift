@@ -11,22 +11,12 @@ struct CadenceApp: App {
     
     init() {
         do {
-            let schema = Schema([
-                Activity.self,
-                ActivitySet.self,
-                TimeBlock.self,
-                TimeBlockRule.self,
-                Remark.self,
-                DayNote.self
-            ])
-            
-            modelContainer = try ModelContainer(
-                for: schema,
-                configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)]
-            )
+            Accountability.migrateDefaultIfNeeded()
+            modelContainer = try CadenceSchema.makeContainer()
             
             setupDefaultData()
-            requestNotificationPermissions()
+            // Notification permission is now asked for when it's needed
+            // (turning on a reminder, starting a timer with a goal).
             UNUserNotificationCenter.current().delegate = notificationDelegate
             JournalNotificationManager.shared.rescheduleAll()
             
@@ -155,11 +145,4 @@ struct CadenceApp: App {
         try? context.save() 
     }
 
-    // MARK: - Permissions
-
-    private func requestNotificationPermissions() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, error in
-            if let error { print("Notification permission error: \(error)") }
-        }
-    }
 }

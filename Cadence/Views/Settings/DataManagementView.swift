@@ -83,7 +83,7 @@ struct DataManagementView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Label("Data Archive (JSON)", systemImage: "archivebox")
                         .font(.headline)
-                    Text("Create a full backup of your data including all remarks and day notes. You can restore this later.")
+                    Text("Create a full backup of your data including all notes, intentions and reflections. You can restore this later.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -106,7 +106,7 @@ struct DataManagementView: View {
                     Label("Free Up Space", systemImage: "trash")
                         .font(.headline)
                         .foregroundStyle(.red)
-                    Text("Archive old records to a file and delete them from the app to improve performance. Associated remarks and day notes are also removed.")
+                    Text("Archive old records to a file and delete them from the app to improve performance. Their notes, intentions and reflections are also removed.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

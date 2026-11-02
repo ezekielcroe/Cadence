@@ -33,36 +33,6 @@ enum ActivityGoal: String, Codable, CaseIterable {
     }
 }
 
-// MARK: - EntryMode
-
-enum EntryMode: String, CaseIterable, Codable {
-    case prospective   // Tap = "I'm starting this now"
-    case retrospective // Tap = "I just finished this"
-
-    var displayName: String {
-        switch self {
-        case .prospective:  return "Start"
-        case .retrospective: return "Log"
-        }
-    }
-
-    var description: String {
-        switch self {
-        case .prospective:
-            return "Tap an activity to start tracking it forward"
-        case .retrospective:
-            return "Tap an activity to label the time since your last entry"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .prospective:  return "play.fill"
-        case .retrospective: return "tag.fill"
-        }
-    }
-}
-
 // MARK: - Remark Model
 
 @Model
@@ -109,8 +79,6 @@ final class DayNote {
     var intention:  String
     var reflection: String
 
-    // Tracks the actual wall-clock time each field was last written.
-    // Optional so older records (and empty fields) naturally carry nil.
     var intentionUpdatedAt:  Date?
     var reflectionUpdatedAt: Date?
 
@@ -119,7 +87,6 @@ final class DayNote {
         self.date       = Calendar.current.startOfDay(for: date)
         self.intention  = intention
         self.reflection = reflection
-        // Stamp creation time only when content is provided at init
         self.intentionUpdatedAt  = intention.isEmpty  ? nil : Date()
         self.reflectionUpdatedAt = reflection.isEmpty ? nil : Date()
     }
@@ -130,11 +97,6 @@ final class DayNote {
 }
 
 // MARK: - Activity Model
-//
-// Activities live in a global library and can belong to any number of ActivitySets.
-// The many-to-many relationship is declared here; ActivitySet owns the other side.
-// TimeBlock snapshots activityName/activityColor at record time so history is
-// unaffected by later edits to an Activity.
 
 @Model
 final class Activity {
@@ -151,8 +113,6 @@ final class Activity {
         set { goalRaw = newValue.rawValue }
     }
 
-    // Many-to-many — an Activity can appear in any number of Sets.
-    // Removing an Activity from a Set (or deleting the Set) does not delete the Activity.
     @Relationship(inverse: \ActivitySet.activities)
     var sets: [ActivitySet] = []
 
@@ -168,9 +128,6 @@ final class Activity {
 }
 
 // MARK: - ActivitySet Model
-//
-// A Set is a named palette of Activities.
-// Deleting a Set does NOT delete its Activities — they stay in the library.
 
 @Model
 final class ActivitySet {
@@ -181,7 +138,6 @@ final class ActivitySet {
 
     @Relationship var activities: [Activity] = []
 
-    // Removed entryMode parameter and variables
     init(name: String, isActive: Bool = false) {
         self.id           = UUID()
         self.name         = name
@@ -191,6 +147,8 @@ final class ActivitySet {
 }
 
 // MARK: - TimeBlockRule Model
+// Drives automatic activity-set switching by time of day. The tracking
+// window (accountable hours) is a separate concept — see TrackingWindow.swift.
 
 @Model
 final class TimeBlockRule {
@@ -248,24 +206,17 @@ final class TimeBlockRule {
     }
 }
 
-extension TimeBlockRule {
-    func covers(timeRange: ClosedRange<Date>) -> Bool {
-        
-        let calendar = Calendar.current
-        let gapStart = timeRange.lowerBound
-        _ = timeRange.upperBound
-        
-        // Convert rule start/end to minutes-from-midnight for easy comparison
-        let ruleStartMins = calendar.component(.hour, from: startTime) * 60 + calendar.component(.minute, from: startTime)
-        let ruleEndMins = calendar.component(.hour, from: endTime) * 60 + calendar.component(.minute, from: endTime)
-        
-        let gapStartMins = calendar.component(.hour, from: gapStart) * 60 + calendar.component(.minute, from: gapStart)
-        
-        if ruleEndMins < ruleStartMins {
-            return gapStartMins >= ruleStartMins || gapStartMins < ruleEndMins
-        } else {
-            return gapStartMins >= ruleStartMins && gapStartMins < ruleEndMins
-        }
+// MARK: - PauseSpan
+
+/// A single pause as an interval in time. `end == nil` means the pause is
+/// still open. Persisted per block so pause time can be clipped exactly
+/// when a block spans a day boundary, and so timesheets can show breaks.
+struct PauseSpan: Codable, Hashable {
+    var start: Date
+    var end: Date?
+
+    func duration(asOf now: Date = Date()) -> TimeInterval {
+        max(0, (end ?? now).timeIntervalSince(start))
     }
 }
 
@@ -286,7 +237,15 @@ final class TimeBlock {
     var isPaused:           Bool
     var pauseStartTime:     Date?
     var pauseCount:         Int
+
+    /// LEGACY. Pre-migration blocks carry their accumulated pause time here.
+    /// New code never writes to it — new pauses are recorded in `pauseSpans`.
+    /// Total pause time is always read through `pauseDuration`.
     var totalPauseDuration: TimeInterval
+
+    /// Every pause of this block as a dated interval. Source of truth for
+    /// pause time on all post-migration blocks.
+    var pauseSpans: [PauseSpan] = []
 
     var stopState:   String         // "ongoing" | "switched" | "stopped"
     var switchCount: Int
@@ -304,12 +263,12 @@ final class TimeBlock {
         self.pauseStartTime     = nil
         self.pauseCount         = 0
         self.totalPauseDuration = 0
+        self.pauseSpans         = []
         self.stopState          = "ongoing"
         self.switchCount        = 0
-        self.targetDuration = targetDuration
+        self.targetDuration     = targetDuration
     }
 
-    // Convenience init — resolves activitySetID from the activity's first active set
     convenience init(activity: Activity, startTime: Date, activeSetID: UUID? = nil) {
         self.init(
             activityID:    activity.id,
@@ -320,20 +279,53 @@ final class TimeBlock {
         )
     }
 
-    var duration: TimeInterval {
-        let raw          = (endTime ?? Date()).timeIntervalSince(startTime)
-        let currentPause = isPaused ? Date().timeIntervalSince(pauseStartTime ?? Date()) : 0
-        return max(0, raw - totalPauseDuration - currentPause)
+    /// Total pause time: legacy accumulator + all spans (an open span counts
+    /// up to now). Legacy and spans never double-count because writes moved
+    /// exclusively to spans at migration.
+    var pauseDuration: TimeInterval {
+        totalPauseDuration + pauseSpans.reduce(0) { $0 + $1.duration() }
     }
-    
+
+    var duration: TimeInterval {
+        let raw = (endTime ?? Date()).timeIntervalSince(startTime)
+        return max(0, raw - pauseDuration)
+    }
+
     var remainingDuration: TimeInterval? {
-            guard let target = targetDuration else { return nil }
-            let remain = target - duration
-            return remain > 0 ? remain : 0
+        guard let target = targetDuration else { return nil }
+        let remain = target - duration
+        return remain > 0 ? remain : 0
     }
 
     var isActive:    Bool   { endTime == nil && !isPaused }
     var displayName: String { pauseCount > 0 ? "\(activityName) (paused \(pauseCount)×)" : activityName }
+
+    // MARK: Pause mutation
+    // All pause writes go through these two so the stored flags and the
+    // span array can never disagree.
+
+    func beginPause(at time: Date = Date()) {
+        guard !isPaused, endTime == nil else { return }
+        isPaused = true
+        pauseStartTime = time
+        pauseCount += 1
+        pauseSpans = pauseSpans + [PauseSpan(start: time)]
+    }
+
+    func endPause(at time: Date = Date()) {
+        guard isPaused else { return }
+        if let idx = pauseSpans.lastIndex(where: { $0.end == nil }) {
+            var spans = pauseSpans
+            spans[idx].end = max(time, spans[idx].start)
+            pauseSpans = spans
+        } else if let pauseStart = pauseStartTime {
+            // Block was paused before the migration added spans:
+            // fall back to the legacy accumulator once.
+            totalPauseDuration += max(0, time.timeIntervalSince(pauseStart))
+        }
+        isPaused = false
+        pauseStartTime = nil
+    }
 }
 
 // MARK: - TimeInterval Extensions

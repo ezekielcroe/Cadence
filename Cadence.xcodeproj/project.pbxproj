@@ -6,7 +6,18 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		FE225BFF3098DE4700348874 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FE6796772F2B8FF200A9BBBA /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FE67967E2F2B8FF200A9BBBA;
+			remoteInfo = Cadence;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		FE225BFB3098DE4700348874 /* CadenceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CadenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE67967F2F2B8FF200A9BBBA /* Cadence.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Cadence.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -21,6 +32,11 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		FE225BFC3098DE4700348874 /* CadenceTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CadenceTests;
+			sourceTree = "<group>";
+		};
 		FE6796812F2B8FF200A9BBBA /* Cadence */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
@@ -32,6 +48,13 @@
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		FE225BF83098DE4700348874 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FE67967C2F2B8FF200A9BBBA /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -46,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				FE6796812F2B8FF200A9BBBA /* Cadence */,
+				FE225BFC3098DE4700348874 /* CadenceTests */,
 				FE6796802F2B8FF200A9BBBA /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				FE67967F2F2B8FF200A9BBBA /* Cadence.app */,
+				FE225BFB3098DE4700348874 /* CadenceTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -61,6 +86,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		FE225BFA3098DE4700348874 /* CadenceTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FE225C033098DE4700348874 /* Build configuration list for PBXNativeTarget "CadenceTests" */;
+			buildPhases = (
+				FE225BF73098DE4700348874 /* Sources */,
+				FE225BF83098DE4700348874 /* Frameworks */,
+				FE225BF93098DE4700348874 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FE225C003098DE4700348874 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				FE225BFC3098DE4700348874 /* CadenceTests */,
+			);
+			name = CadenceTests;
+			packageProductDependencies = (
+			);
+			productName = CadenceTests;
+			productReference = FE225BFB3098DE4700348874 /* CadenceTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		FE67967E2F2B8FF200A9BBBA /* Cadence */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = FE67968C2F2B8FF300A9BBBA /* Build configuration list for PBXNativeTarget "Cadence" */;
@@ -90,9 +138,14 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 2620;
+				LastSwiftUpdateCheck = 2720;
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
+					FE225BFA3098DE4700348874 = {
+						CreatedOnToolsVersion = 27.2;
+						LastSwiftMigration = 2720;
+						TestTargetID = FE67967E2F2B8FF200A9BBBA;
+					};
 					FE67967E2F2B8FF200A9BBBA = {
 						CreatedOnToolsVersion = 26.2;
 					};
@@ -113,11 +166,19 @@
 			projectRoot = "";
 			targets = (
 				FE67967E2F2B8FF200A9BBBA /* Cadence */,
+				FE225BFA3098DE4700348874 /* CadenceTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		FE225BF93098DE4700348874 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FE67967D2F2B8FF200A9BBBA /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -128,6 +189,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		FE225BF73098DE4700348874 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FE67967B2F2B8FF200A9BBBA /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -137,7 +205,62 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		FE225C003098DE4700348874 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FE67967E2F2B8FF200A9BBBA /* Cadence */;
+			targetProxy = FE225BFF3098DE4700348874 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		FE225C013098DE4700348874 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9Y77PNP57U;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = GeekyZeke.CadenceTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Cadence.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Cadence";
+			};
+			name = Debug;
+		};
+		FE225C023098DE4700348874 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 9Y77PNP57U;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.2;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = GeekyZeke.CadenceTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Cadence.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Cadence";
+			};
+			name = Release;
+		};
 		FE67968A2F2B8FF300A9BBBA /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -342,6 +465,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		FE225C033098DE4700348874 /* Build configuration list for PBXNativeTarget "CadenceTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FE225C013098DE4700348874 /* Debug */,
+				FE225C023098DE4700348874 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		FE67967A2F2B8FF200A9BBBA /* Build configuration list for PBXProject "Cadence" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

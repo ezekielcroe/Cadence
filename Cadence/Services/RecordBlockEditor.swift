@@ -1,3 +1,18 @@
+//
+//  RecordBlockEditor.swift
+//  Cadence
+//
+//  FULL REPLACEMENT for the existing file.
+//  Changes from the original:
+//  - mergeBlocks: pause spans from all source blocks carry over to the
+//    merged block, sorted; the legacy totalPauseDuration sum is kept.
+//  - splitBlock: pause spans are partitioned at the split point (a span
+//    straddling it is cut in two); the legacy pause total is apportioned
+//    by duration fraction; pauseCount is derived per half.
+//  - splitBlock: remarks go to the half their own timestamp falls in,
+//    instead of all landing on the first half.
+//
+
 import Foundation
 import SwiftData
 
@@ -33,7 +48,8 @@ class TimeBlockEditor {
     // MARK: - Merge
 
     /// Merges adjacent activity blocks into one.
-    /// Remarks attached to any of the source blocks are re-pointed to the merged block.
+    /// Remarks attached to any of the source blocks are re-pointed to the
+    /// merged block. Pause spans from every source carry over.
     func mergeBlocks(_ blocks: [TimeBlock], intoActivity targetActivity: Activity?) throws {
         guard canMerge(blocks) else { throw TimeBlockEditorError.cannotMerge }
         guard let activity = targetActivity else { throw TimeBlockEditorError.activityRequired }
@@ -44,15 +60,17 @@ class TimeBlockEditor {
         }
 
         // Build the merged block
-        let mergedBlock                    = TimeBlock(activity: activity, startTime: sorted[0].startTime)
-        mergedBlock.endTime                = endTime
-        mergedBlock.stopState              = lastBlock.stopState
-        mergedBlock.totalPauseDuration     = sorted.reduce(0) { $0 + $1.totalPauseDuration }
-        mergedBlock.pauseCount             = sorted.reduce(0) { $0 + $1.pauseCount }
-        mergedBlock.switchCount            = sorted.reduce(0) { $0 + $1.switchCount }
+        let mergedBlock                = TimeBlock(activity: activity, startTime: sorted[0].startTime)
+        mergedBlock.endTime            = endTime
+        mergedBlock.stopState          = lastBlock.stopState
+        mergedBlock.totalPauseDuration = sorted.reduce(0) { $0 + $1.totalPauseDuration }
+        mergedBlock.pauseCount         = sorted.reduce(0) { $0 + $1.pauseCount }
+        mergedBlock.switchCount        = sorted.reduce(0) { $0 + $1.switchCount }
+        mergedBlock.pauseSpans         = sorted
+            .flatMap { $0.pauseSpans }
+            .sorted { $0.start < $1.start }
 
-        // Re-point all Remark records from source blocks to the new merged block.
-        // Fetch per source block — avoids loading the entire Remark table.
+        // Re-point all Remark records from source blocks to the merged block.
         for sourceID in sorted.map({ $0.id }) {
             let descriptor = FetchDescriptor<Remark>(
                 predicate: #Predicate<Remark> { $0.timeBlockID == sourceID }
@@ -68,11 +86,14 @@ class TimeBlockEditor {
         for block in sorted { modelContext.delete(block) }
         modelContext.insert(mergedBlock)
         try modelContext.save()
+
+        HistoryManager.shared.invalidate(block: mergedBlock, in: modelContext)
     }
 
     // MARK: - Split
 
-    /// Splits a completed block at `splitTime`. Remarks stay on the first half.
+    /// Splits a completed block at `splitTime`. Pause spans are partitioned
+    /// at the split point; remarks follow their own timestamps.
     func splitBlock(_ block: TimeBlock, at splitTime: Date) throws {
         guard canSplit(block) else { throw TimeBlockEditorError.cannotSplit }
         guard let endTime = block.endTime else { throw TimeBlockEditorError.blockStillActive }
@@ -94,15 +115,47 @@ class TimeBlockEditor {
         secondBlock.endTime   = endTime
         secondBlock.stopState = block.stopState
 
-        // Remarks stay on the first half — re-point them.
-        // Fetch only remarks for this specific block.
+        // Partition pause spans at the split point. A completed block has
+        // no open spans, but a nil end is defended by closing at splitTime.
+        firstBlock.pauseSpans = block.pauseSpans.compactMap { span in
+            guard span.start < splitTime else { return nil }
+            var clipped = span
+            let spanEnd = clipped.end ?? splitTime
+            clipped.end = min(spanEnd, splitTime)
+            return clipped
+        }
+        secondBlock.pauseSpans = block.pauseSpans.compactMap { span in
+            let spanEnd = span.end ?? splitTime
+            guard spanEnd > splitTime else { return nil }
+            return PauseSpan(start: max(span.start, splitTime), end: span.end)
+        }
+        firstBlock.pauseCount  = firstBlock.pauseSpans.count
+        secondBlock.pauseCount = secondBlock.pauseSpans.count
+
+        // Legacy pause total (pre-migration blocks have no spans to
+        // partition): apportion by duration fraction.
+        if block.totalPauseDuration > 0 {
+            let total = endTime.timeIntervalSince(block.startTime)
+            let firstFraction = total > 0
+                ? splitTime.timeIntervalSince(block.startTime) / total
+                : 0.5
+            firstBlock.totalPauseDuration  = block.totalPauseDuration * firstFraction
+            secondBlock.totalPauseDuration = block.totalPauseDuration * (1 - firstFraction)
+            if firstBlock.pauseCount == 0 && secondBlock.pauseCount == 0 {
+                firstBlock.pauseCount  = block.pauseCount
+            }
+        }
+
+        // Remarks follow their own timestamps.
         let blockID = block.id
         let remarkDescriptor = FetchDescriptor<Remark>(
             predicate: #Predicate<Remark> { $0.timeBlockID == blockID }
         )
         if let blockRemarks = try? modelContext.fetch(remarkDescriptor) {
             for remark in blockRemarks {
-                remark.timeBlockID = firstBlock.id
+                remark.timeBlockID = remark.timestamp < splitTime
+                    ? firstBlock.id
+                    : secondBlock.id
             }
         }
 
@@ -110,6 +163,9 @@ class TimeBlockEditor {
         modelContext.insert(firstBlock)
         modelContext.insert(secondBlock)
         try modelContext.save()
+
+        HistoryManager.shared.invalidate(block: firstBlock,  in: modelContext)
+        HistoryManager.shared.invalidate(block: secondBlock, in: modelContext)
     }
 
     // MARK: - Adjacency Lookup

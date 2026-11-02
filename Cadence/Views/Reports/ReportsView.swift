@@ -16,6 +16,9 @@ struct ReportsView: View {
     @State private var selectedPeriod: ReportGenerator.ReportPeriod = .week
     @State private var report: ReportGenerator.Report?
     @State private var showingShareSheet = false
+    @State private var showingTimesheet = false
+    /// Off: no unaccounted time, fragmentation score or red/green judgement.
+    @AppStorage(Accountability.key) private var accountable = false
 
     let reportGenerator = ReportGenerator()
 
@@ -37,20 +40,31 @@ struct ReportsView: View {
                         ContentUnavailableView(
                             "No Data",
                             systemImage: "chart.bar.xaxis",
-                            description: Text("Start tracking activities to see your reports")
+                            description: Text("Log a few activities on the Today tab to see insights here.")
                         )
                     }
                 }
                 .padding(.vertical)
             }
-            .navigationTitle("Reports")
+            .navigationTitle("Insights")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: shareReport) {
+                    Menu {
+                        Button(action: shareReport) {
+                            Label("Share Summary", systemImage: "square.and.arrow.up")
+                        }
+                        .disabled(report == nil)
+                        Button { showingTimesheet = true } label: {
+                            Label("Export Timesheet PDF…", systemImage: "doc.text")
+                        }
+                    } label: {
                         Image(systemName: "square.and.arrow.up")
                     }
-                    .disabled(report == nil)
+                    .accessibilityLabel("Share or export")
                 }
+            }
+            .sheet(isPresented: $showingTimesheet) {
+                TimesheetExportView()
             }
             .sheet(isPresented: $showingShareSheet) {
                 if let report = report {
@@ -74,22 +88,34 @@ struct ReportsView: View {
                 icon:  "clock.badge.checkmark.fill",
                 color: .blue
             )
-            SummaryCard(
-                title: "Unaccounted",
-                value: max(0, report.unaccountedDuration).formattedDuration,
-                icon:  "questionmark.circle",
-                color: .orange
-            )
+            if accountable {
+                SummaryCard(
+                    title: "Unaccounted",
+                    value: max(0, report.unaccountedDuration).formattedDuration,
+                    icon:  "questionmark.circle",
+                    color: .orange
+                )
+            } else {
+                let noteCount = remarksForPeriod(report.period).count
+                SummaryCard(
+                    title: "Notes",
+                    value: "\(noteCount)",
+                    icon:  "text.bubble.fill",
+                    color: .indigo
+                )
+            }
         }
         .padding(.horizontal)
 
-        // Fragmentation card
-        FragmentationCard(fragmentation: report.fragmentation)
-            .padding(.horizontal)
+        // Fragmentation card (a judgement: accountability only)
+        if accountable {
+            FragmentationCard(fragmentation: report.fragmentation)
+                .padding(.horizontal)
+        }
 
         // Comparison card
         if let comparison = report.comparisonToPrevious {
-            ComparisonCard(comparison: comparison, period: report.period)
+            ComparisonCard(comparison: comparison, period: report.period, judging: accountable)
                 .padding(.horizontal)
         }
 
@@ -584,6 +610,13 @@ struct TagBreakdownCard: View {
 struct ComparisonCard: View {
     let comparison: ReportGenerator.Report.ComparisonData
     let period: ReportGenerator.ReportPeriod
+    /// false: changes are shown in neutral colours, not good/bad.
+    var judging = true
+
+    private var totalColor: Color {
+        guard judging else { return .primary }
+        return comparison.durationChange >= 0 ? .green : .red
+    }
 
     var topChanges: [ActivityChange] { Array(comparison.activityChanges.prefix(3)) }
 
@@ -604,18 +637,18 @@ struct ComparisonCard: View {
                         Image(systemName: comparison.durationChange >= 0 ? "arrow.up.right" : "arrow.down.right")
                         Text(abs(comparison.durationChange).formattedDuration).fontWeight(.semibold)
                     }
-                    .foregroundStyle(comparison.durationChange >= 0 ? .green : .red)
+                    .foregroundStyle(totalColor)
                 }
                 Spacer()
                 Text("\(comparison.durationChange >= 0 ? "+" : "")\(String(format: "%.1f", comparison.percentageChange))%")
                     .font(.title3).fontWeight(.bold)
-                    .foregroundStyle(comparison.durationChange >= 0 ? .green : .red)
+                    .foregroundStyle(totalColor)
             }
 
             if !topChanges.isEmpty {
                 Divider()
                 Text("Biggest Changes").font(.subheadline).foregroundStyle(.secondary)
-                ForEach(topChanges) { ActivityChangeRow(change: $0) }
+                ForEach(topChanges) { ActivityChangeRow(change: $0, judging: judging) }
             }
         }
         .padding()
@@ -626,8 +659,10 @@ struct ComparisonCard: View {
 
 struct ActivityChangeRow: View {
     let change: ActivityChange
+    var judging = true
 
     private var color: Color {
+        guard judging else { return .secondary }
         switch change.goal {
         case .increase: return change.change > 0 ? .green : .red
         case .decrease: return change.change > 0 ? .red : .green

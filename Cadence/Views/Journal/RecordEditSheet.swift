@@ -29,6 +29,7 @@ struct QuickEditSheet: View {
     @State private var showingSplitSheet = false
 
     // Remarks state
+    @State private var editorTarget: JournalEditorTarget?
     @State private var newRemarkText = ""
     @FocusState private var remarkFieldFocused: Bool
 
@@ -96,11 +97,13 @@ struct QuickEditSheet: View {
                     
                     Section {
                         ForEach(blockRemarks) { remark in
-                            RemarkRow(remark: remark, onDelete: { deleteRemark(remark) })
+                            RemarkRow(remark: remark,
+                                      onDelete: { deleteRemark(remark) },
+                                      onEdit: { editorTarget = .editNote(remarkID: remark.id) })
                         }
                         
                         HStack {
-                            TextField("Add a remark...", text: $newRemarkText)
+                            TextField("Add a note…", text: $newRemarkText)
                                 .focused($remarkFieldFocused)
                                 .onSubmit { addRemark() }
                             
@@ -111,10 +114,19 @@ struct QuickEditSheet: View {
                                         .foregroundStyle(.blue)
                                 }
                                 .buttonStyle(.plain)
+                            } else {
+                                Button {
+                                    editorTarget = .newNote(blockID: block.id)
+                                } label: {
+                                    Image(systemName: "square.and.pencil")
+                                        .foregroundStyle(.blue)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Write a longer note")
                             }
                         }
                     } header: {
-                        Text("Remarks")
+                        Text("Notes")
                     }
                     
                     Section {
@@ -166,6 +178,9 @@ struct QuickEditSheet: View {
                     selectedActivityID: $editedActivityID
                 )
             }
+            .fullScreenCover(item: $editorTarget) { target in
+                JournalEditorView(target: target)
+            }
         }
         .presentationDetents([.medium, .large])
     }
@@ -188,7 +203,7 @@ struct QuickEditSheet: View {
                     .font(.headline)
 
                 if block.pauseCount > 0 {
-                    Text("\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") · \(block.totalPauseDuration.formattedDuration)")
+                    Text("\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") · \(block.pauseDuration.formattedDuration)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -308,9 +323,7 @@ struct QuickEditSheet: View {
         try? modelContext.save()
 
         HistoryManager.shared.invalidateDate(oldStart, in: modelContext)
-        if !Calendar.current.isDate(oldStart, inSameDayAs: editedStartTime) {
-            HistoryManager.shared.invalidateDate(editedStartTime, in: modelContext)
-        }
+        HistoryManager.shared.invalidate(block: block, in: modelContext)
         onSave()
         dismiss()
     }
@@ -376,6 +389,8 @@ struct QuickEditSheet: View {
 struct RemarkRow: View {
     let remark: Remark
     let onDelete: () -> Void
+    /// Tap to edit. Optional so older call sites keep compiling.
+    var onEdit: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -397,6 +412,8 @@ struct RemarkRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contentShape(Rectangle())
+        .onTapGesture { onEdit?() }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) { onDelete() } label: {
                 Label("Delete", systemImage: "trash")
@@ -413,6 +430,8 @@ struct ActivityPickerSheet: View {
     let activities: [Activity]
     let activitySets: [ActivitySet]
     @Binding var selectedActivityID: UUID?
+    /// Offer "None". Off when relabeling an entry, which must have an activity.
+    var allowsNone: Bool = true
 
     @State private var searchText = ""
 
@@ -440,6 +459,7 @@ struct ActivityPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                if allowsNone {
                 Section {
                     Button {
                         selectedActivityID = nil
@@ -456,6 +476,7 @@ struct ActivityPickerSheet: View {
                             }
                         }
                     }
+                }
                 }
 
                 ForEach(filteredGroupedActivities, id: \.set.id) { group in

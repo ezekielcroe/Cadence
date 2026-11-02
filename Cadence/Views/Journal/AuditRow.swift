@@ -70,7 +70,7 @@ struct AuditRow: View {
 
                         if block.pauseCount > 0 {
                             Label(
-                                "\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") · \(block.totalPauseDuration.formattedDuration) total",
+                                "\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") · \(block.pauseDuration.formattedDuration) total",
                                 systemImage: "pause.circle"
                             )
                             .font(.caption)
@@ -202,7 +202,7 @@ struct AuditRow: View {
 
         block.startTime = newStart
         try? modelContext.save()
-        HistoryManager.shared.invalidateDate(block.startTime, in: modelContext)
+        HistoryManager.shared.invalidate(block: block, in: modelContext)
     }
 
     private func nudgeEndTime(by interval: TimeInterval) {
@@ -216,7 +216,7 @@ struct AuditRow: View {
 
         block.endTime = newEnd
         try? modelContext.save()
-        HistoryManager.shared.invalidateDate(block.startTime, in: modelContext)
+        HistoryManager.shared.invalidate(block: block, in: modelContext)
     }
 }
 

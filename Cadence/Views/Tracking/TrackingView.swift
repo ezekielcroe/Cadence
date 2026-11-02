@@ -2,263 +2,163 @@
 //  TrackingView.swift
 //  Cadence
 //
+//  STEP 4: the Timer tab became the Today tab (Views/Today/TodayView.swift).
+//  This file now holds the tracking components Today is built from:
+//  the "since…" counter card, the live timer card, the long-span confirm
+//  sheet, intention banner, activity buttons and the set picker.
+//  (Feel free to rename it TrackingComponents.swift in Xcode.)
+//
 
 import SwiftUI
 import SwiftData
 import Combine
 
-struct TrackingView: View {
-    @ObservedObject var manager: TimeTrackingManager
-    @Environment(\.modelContext) private var modelContext
+// MARK: - Retrospective Card
 
-    @Query private var activitySets: [ActivitySet]
-    @Query private var activities: [Activity]
-    @Query private var dayNotes: [DayNote]
-
-    @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    @State private var showingQuickRemark = false
-    @State private var remarkTargetBlock: TimeBlock?
-    @State private var showingIntention  = false
-    @State private var showingNoActivityAlert = false
-
-    var activeSet: ActivitySet? { activitySets.first { $0.isActive } }
-
-    var activeSetActivities: [Activity] {
-        guard let activities = activeSet?.activities else { return [] }
-        return activities.sorted { $0.sortOrder < $1.sortOrder }
-    }
-
-    var isCurrentlyPaused: Bool {
-        if manager.currentEntryMode == .prospective {
-            return manager.currentTimeBlock?.isPaused ?? false
-        }
-        return false // Handled separately in retrospective mode
-    }
-
-    /// Today's DayNote if it exists
-    private var todayNote: DayNote? {
-        let today = DayNote.normalizedDate(Date())
-        return dayNotes.first { Calendar.current.isDate($0.date, inSameDayAs: today) }
-    }
-
-    /// Show the intention banner only before 2pm if no intention is set
-    private var shouldShowIntentionBanner: Bool {
-        guard todayNote?.intention.isEmpty ?? true else { return false }
-        let hour = Calendar.current.component(.hour, from: Date())
-        return hour < 14
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-
-                // Morning intention banner
-                if shouldShowIntentionBanner {
-                    IntentionBanner { showingIntention = true }
-                        .padding(.horizontal)
-                } else if let note = todayNote, !note.intention.isEmpty {
-                    IntentionDisplayCard(intention: note.intention) { showingIntention = true }
-                        .padding(.horizontal)
-                }
-
-                // Mode-specific Tracking Cards
-                if manager.currentEntryMode == .prospective {
-                    CurrentActivityCard(
-                        block: manager.currentTimeBlock,
-                        isPaused: isCurrentlyPaused,
-                        onPause:  { manager.handlePauseTap() },
-                        onStop:   { manager.handleStopTap() },
-                        onResume: { manager.handleResumeTap() },
-                        onQuickRemark: {
-                            remarkTargetBlock = manager.currentTimeBlock
-                            showingQuickRemark = true
-                        },
-                        onSetTarget: { target in
-                            if let currentBlock = manager.currentTimeBlock {
-                                manager.setTargetDuration(for: currentBlock, duration: target)
-                            }
-                        }
-                    )
-                } else if manager.currentEntryMode == .retrospective {
-                    RetrospectiveCard(
-                        unlabeledDuration: manager.unlabeledDuration,
-                        isPaused: manager.retrospectiveIsPaused,
-                        hasAnchor: manager.retrospectiveAnchorTime != nil,
-                        onPause:  { manager.handlePauseTap() },
-                        onResume: { manager.handleResumeTap() },
-                        onDiscard: { manager.handleStopTap() },
-                        onQuickRemark: {
-                            if let lastBlock = manager.getLastCompletedBlock() {
-                                remarkTargetBlock = lastBlock
-                                showingQuickRemark = true
-                            } else {
-                                // Trigger the alert if no block is found
-                                showingNoActivityAlert = true
-                            }
-                        }
-                    )
-                }
-
-                // Set Picker & Mode Indicator
-                if activitySets.count > 1 {
-                    HStack {
-                        ActivitySetPicker(sets: activitySets, manager: manager)
-                        
-                        // Mode badge/picker
-                        Picker("Mode", selection: Binding(
-                            get: { manager.currentEntryMode },
-                            set: { manager.toggleEntryMode(to: $0) }
-                        )) {
-                            ForEach(EntryMode.allCases, id: \.self) { mode in
-                                Text(mode.displayName).tag(mode)
-                            }
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 150)
-                    }
-                    .padding(.horizontal)
-                }
-
-                LazyVGrid(columns: [
-                    GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())
-                ], spacing: 12) {
-                    ForEach(activeSetActivities) { activity in
-                        ActivityButton(
-                            activity: activity,
-                            isActive: manager.currentEntryMode == .prospective && manager.currentTimeBlock?.activityID == activity.id && !isCurrentlyPaused
-                        ) {
-                            if manager.currentEntryMode == .prospective && isCurrentlyPaused && manager.currentTimeBlock?.activityID == activity.id {
-                                manager.handleResumeTap()
-                            } else {
-                                manager.handleActivityTap(activity)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal)
-            }
-            .padding(.top)
-        }
-        .onReceive(timer) { _ in
-            let isActivelyTrackingProspective = manager.currentTimeBlock != nil && manager.currentTimeBlock?.endTime == nil
-            let isActivelyTrackingRetrospective = manager.currentEntryMode == .retrospective && manager.retrospectiveAnchorTime != nil
-            
-            if isActivelyTrackingProspective || isActivelyTrackingRetrospective {
-                manager.objectWillChange.send()
-            }
-        }
-        .onAppear {
-            manager.updateIdleTimerState()
-        }
-        .onDisappear {
-            // Handled automatically by idle timer updates
-        }
-        .sheet(isPresented: $showingQuickRemark) {
-            if let block = remarkTargetBlock {
-                QuickRemarkSheet(timeBlock: block)
-            }
-        }
-        .sheet(isPresented: $showingIntention) {
-            IntentionSheet(existingNote: todayNote)
-                .presentationDetents([.medium])
-        }
-        
-        .alert("No Previous Activity", isPresented: $showingNoActivityAlert) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text("You need to log at least one activity before you can attach a retrospective remark to it.")
-        }
-    }
-}
-
-// MARK: - New Retrospective Card
-
+/// "23m since Meetings": the time you haven't logged yet, counting from
+/// the end of your last entry (or from a Leave blank).
 struct RetrospectiveCard: View {
+    let anchor: Date
     let unlabeledDuration: TimeInterval
-    let isPaused: Bool
-    let hasAnchor: Bool
-    let onPause: () -> Void
-    let onResume: () -> Void
-    let onDiscard: () -> Void
-    let onQuickRemark: () -> Void
+    /// The activity the counter runs from, when it runs from an entry.
+    let sinceActivityName: String?
+    /// Shown as "Last: …" when the post-tap banner isn't on screen.
+    let lastLogged: LoggedBlockSnapshot?
+    let onLeaveBlank: () -> Void
+    let onAddNote: (LoggedBlockSnapshot) -> Void
+    let onChange: (LoggedBlockSnapshot) -> Void
+
+    private var anchorLabel: String {
+        let cal = Calendar.current
+        let time = anchor.formatted(date: .omitted, time: .shortened)
+        if cal.isDateInToday(anchor)     { return "since \(time)" }
+        if cal.isDateInYesterday(anchor) { return "since yesterday \(time)" }
+        return "since \(anchor.formatted(date: .abbreviated, time: .shortened))"
+    }
 
     var body: some View {
         VStack(spacing: 12) {
-            // Status label
             HStack {
-                Image(systemName: "clock.badge.questionmark")
-                    .foregroundStyle(.orange)
-                Text("Unlabeled Time")
+                Image(systemName: "clock")
+                    .foregroundStyle(.secondary)
+                Text(sinceActivityName.map { "Since \($0)" } ?? "Not logged yet")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 Spacer()
-                if isPaused {
-                    Text("PAUSED")
-                        .font(.caption2).fontWeight(.bold)
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 8).padding(.vertical, 2)
-                        .background(Color.orange.opacity(0.15))
-                        .cornerRadius(4)
-                }
-            }
-
-            // Elapsed time — large display
-            if hasAnchor {
-                Text(unlabeledDuration.formattedDuration)
-                    .font(.system(size: 48, weight: .light, design: .monospaced))
-                    .foregroundStyle(isPaused ? .secondary : .primary)
-                    .contentTransition(.numericText())
-            } else {
-                Text("Tap an activity to start logging")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(.vertical, 14)
-            }
-
-            // Hint text
-            if hasAnchor {
-                Text("Tap an activity below to label this time")
+                Text(anchorLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
 
-            // Controls
-            if hasAnchor {
-                HStack(spacing: 16) {
-                    Button(action: isPaused ? onResume : onPause) {
-                        Label(
-                            isPaused ? "Resume" : "Pause",
-                            systemImage: isPaused ? "play.fill" : "pause.fill"
-                        )
-                        .font(.subheadline).fontWeight(.medium)
-                        .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(isPaused ? .green : .blue)
+            Text(unlabeledDuration.formattedDuration)
+                .font(.system(size: 48, weight: .light, design: .monospaced))
+                .foregroundStyle(.primary)
+                .contentTransition(.numericText())
 
-                    Button(role: .destructive, action: onDiscard) {
-                        Label("Discard", systemImage: "xmark")
-                            .font(.subheadline).fontWeight(.medium)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .tint(.red)
-                }
-                .padding(.top, 8)
-                
-                Button(action: onQuickRemark) {
-                    Label("Quick Remark (Previous)", systemImage: "note.text.badge.plus")
-                        .font(.subheadline).fontWeight(.medium)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .tint(.blue)
+            Text("Tap an activity to log this time · hold one to start a timer")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            if let last = lastLogged {
+                LastLoggedRow(
+                    snapshot: last,
+                    onAddNote: { onAddNote(last) },
+                    onChange:  { onChange(last) }
+                )
+                .padding(.top, 4)
             }
+
+            Button(action: onLeaveBlank) {
+                Label("Leave Blank", systemImage: "circle.dashed")
+                    .font(.subheadline).fontWeight(.medium)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .tint(.secondary)
+            .padding(.top, 4)
         }
         .padding()
         .background(Color(.systemGray6))
         .cornerRadius(16)
         .padding(.horizontal)
+    }
+}
+
+// MARK: - Label Confirm Sheet (long spans)
+
+struct LabelConfirmSheet: View {
+    let pending: PendingLabel
+    @ObservedObject var manager: TimeTrackingManager
+
+    @State private var start: Date
+
+    init(pending: PendingLabel, manager: TimeTrackingManager) {
+        self.pending = pending
+        self.manager = manager
+        _start = State(initialValue: pending.suggestedStart)
+    }
+
+    private var duration: TimeInterval { pending.end.timeIntervalSince(start) }
+    private var skipped: TimeInterval { start.timeIntervalSince(pending.suggestedStart) }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(Color(hex: pending.activity.color))
+                        .frame(width: 14, height: 14)
+                    Text(pending.activity.name)
+                        .font(.title3).fontWeight(.semibold)
+                    Spacer()
+                    Text(duration.formattedDuration)
+                        .font(.title3).fontWeight(.medium)
+                        .monospacedDigit()
+                }
+
+                Text("This is over \(manager.confirmThreshold.formattedDuration) long. Check where it starts. Anything before the start stays blank in your journal.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                DatePicker(
+                    "Starts",
+                    selection: $start,
+                    in: pending.suggestedStart...pending.end,
+                    displayedComponents: [.date, .hourAndMinute]
+                )
+
+                LabeledContent("Ends") {
+                    Text(pending.end.formatted(date: .abbreviated, time: .shortened))
+                        .foregroundStyle(.secondary)
+                }
+                .font(.subheadline)
+
+                if skipped >= 60 {
+                    Label("\(skipped.formattedDuration) before this start will stay blank",
+                          systemImage: "circle.dashed")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Confirm Label")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { manager.cancelPendingLabel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { manager.commitPendingLabel(start: start) }
+                        .fontWeight(.semibold)
+                        .disabled(duration < 60)
+                }
+            }
+        }
     }
 }
 
@@ -330,195 +230,9 @@ struct IntentionDisplayCard: View {
     }
 }
 
-// MARK: - Intention Sheet (unchanged)
+// Intention, reflection and note writing: Views/Journal/JournalEditor.swift
 
-struct IntentionSheet: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-
-    let existingNote: DayNote?
-
-    @State private var intentionText = ""
-    @FocusState private var isFocused: Bool
-
-    var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Today's Intention")
-                        .font(.headline)
-                    Text("What do you want to do or accomplish today?")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                TextField("Write your intention here…", text: $intentionText, axis: .vertical)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isFocused)
-                    .lineLimit(3...6)
-
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("Morning Intention")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { save() }
-                        .fontWeight(.semibold)
-                        .disabled(intentionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-            .onAppear {
-                intentionText = existingNote?.intention ?? ""
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isFocused = true }
-            }
-        }
-    }
-
-    private func save() {
-        let trimmed = intentionText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { dismiss(); return }
-
-        if let note = existingNote {
-            note.intention = trimmed
-            note.intentionUpdatedAt = Date()
-        } else {
-            let note = DayNote(date: Date(), intention: trimmed)
-            modelContext.insert(note)
-        }
-        try? modelContext.save()
-        dismiss()
-    }
-}
-
-// MARK: - Updated QuickRemarkSheet (unchanged)
-
-struct QuickRemarkSheet: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-    @Query private var blockRemarks: [Remark]
-
-    @Bindable var timeBlock: TimeBlock
-    @State private var newRemark = ""
-    @FocusState private var isTextFieldFocused: Bool
-
-    init(timeBlock: TimeBlock) {
-        self.timeBlock = timeBlock
-        let blockID = timeBlock.id
-        _blockRemarks = Query(
-            filter: #Predicate<Remark> { $0.timeBlockID == blockID },
-            sort: \.timestamp
-        )
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                // Block context header
-                HStack {
-                    Circle()
-                        .fill(Color(hex: timeBlock.activityColor))
-                        .frame(width: 12, height: 12)
-                    Text(timeBlock.activityName)
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    Text(timeBlock.duration.formattedDuration)
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                }
-                .padding()
-                .background(Color(.systemGray6))
-                .cornerRadius(12)
-
-                // Input field
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Add Remark")
-                        .font(.headline)
-
-                    TextField("Type your note… (#tags for categories)", text: $newRemark, axis: .vertical)
-                        .textFieldStyle(.roundedBorder)
-                        .focused($isTextFieldFocused)
-                        .lineLimit(3...6)
-                        .submitLabel(.done)
-                        .onSubmit {
-                            if !newRemark.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { addRemark() }
-                        }
-                }
-
-                // Existing remarks for this block
-                if !blockRemarks.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Previous Remarks")
-                            .font(.caption).foregroundStyle(.secondary)
-
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(blockRemarks) { remark in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack {
-                                            Text(remark.timestamp.formatted(date: .omitted, time: .shortened))
-                                                .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
-                                            Spacer()
-                                        }
-                                        Text(remark.text)
-                                            .font(.caption).foregroundStyle(.primary)
-                                        if !remark.tags.isEmpty {
-                                            TagChipRow(tags: remark.tags)
-                                        }
-                                    }
-                                    .padding(8)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .background(Color(.systemGray6))
-                                    .cornerRadius(8)
-                                }
-                            }
-                        }
-                        .frame(maxHeight: 150)
-                    }
-                }
-
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("Quick Remark")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { addRemark() }
-                        .disabled(newRemark.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        .fontWeight(.semibold)
-                }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { isTextFieldFocused = false }
-                }
-            }
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { isTextFieldFocused = true }
-            }
-        }
-        .presentationDetents([.medium, .large])
-        .presentationDragIndicator(.visible)
-    }
-
-    private func addRemark() {
-        let trimmed = newRemark.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
-        let remark = Remark(timeBlockID: timeBlock.id, text: trimmed)
-        modelContext.insert(remark)
-        try? modelContext.save()
-        dismiss()
-    }
-}
-
-// MARK: - Current Activity Card (unchanged from original)
+// MARK: - Current Activity Card (unchanged)
 
 struct CurrentActivityCard: View {
     let block: TimeBlock?
@@ -528,7 +242,7 @@ struct CurrentActivityCard: View {
     let onResume: () -> Void
     let onQuickRemark: () -> Void
     let onSetTarget: (TimeInterval?) -> Void
-    
+
     @State private var showingTimerInput = false
     @State private var targetMinutes: Double = 25
 
@@ -553,10 +267,9 @@ struct CurrentActivityCard: View {
             HStack {
                 Circle().fill(Color(hex: block.activityColor)).frame(width: 16, height: 16)
                 Text(block.activityName).font(.title2).fontWeight(.semibold)
-                
+
                 Spacer()
-                
-                // Inline timer toggle button
+
                 Button {
                     withAnimation { showingTimerInput.toggle() }
                 } label: {
@@ -565,7 +278,6 @@ struct CurrentActivityCard: View {
                 }
             }
 
-            // Conditional display for Countdown vs Elapsed Time
             if let target = block.targetDuration {
                 let remaining = max(0, target - block.duration)
                 VStack(spacing: 4) {
@@ -574,7 +286,7 @@ struct CurrentActivityCard: View {
                         .monospacedDigit()
                         .contentTransition(.numericText())
                         .foregroundStyle(remaining == 0 ? .red : .primary)
-                    
+
                     Text("remaining of \(target.formattedDuration)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -586,20 +298,19 @@ struct CurrentActivityCard: View {
                     .contentTransition(.numericText())
             }
 
-            // Inline Timer Input
             if showingTimerInput {
                 VStack(spacing: 12) {
                     Divider()
                     HStack {
                         Stepper("\(Int(targetMinutes)) min", value: $targetMinutes, in: 1...120, step: 5)
                             .labelsHidden()
-                        
+
                         Text("\(Int(targetMinutes)) min")
                             .font(.headline)
                             .monospacedDigit()
-                        
+
                         Spacer()
-                        
+
                         if block.targetDuration != nil {
                             Button("Clear") {
                                 onSetTarget(nil)
@@ -608,7 +319,7 @@ struct CurrentActivityCard: View {
                             .buttonStyle(.bordered)
                             .tint(.red)
                         }
-                        
+
                         Button("Set Goal") {
                             onSetTarget(targetMinutes * 60)
                             withAnimation { showingTimerInput = false }
@@ -633,14 +344,17 @@ struct CurrentActivityCard: View {
             }
 
             if !isPaused && block.pauseCount > 0 {
-                Text("\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") this session · \(block.totalPauseDuration.formattedDuration) total")
+                Text("\(block.pauseCount) pause\(block.pauseCount == 1 ? "" : "s") this session · \(block.pauseDuration.formattedDuration) total")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
             Text("Since \(block.startTime, style: .time)").font(.caption).foregroundStyle(.secondary)
+            Text("Tap another activity to switch · Stop to go back to logging")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
         }
 
-        // Action Buttons
         VStack(spacing: 12) {
             HStack(spacing: 20) {
                 if isPaused {
@@ -674,7 +388,7 @@ struct CurrentActivityCard: View {
         VStack(spacing: 12) {
             Image(systemName: "timer").font(.system(size: 48)).foregroundStyle(.secondary)
             Text("No Active Activity").font(.title3).fontWeight(.medium)
-            Text("Tap an activity below to start tracking")
+            Text("Hold an activity below to start a timer")
                 .font(.subheadline).foregroundStyle(.secondary)
         }
         .padding(.vertical, 20)
@@ -722,18 +436,18 @@ struct ActivityButton: View {
     }
 }
 
-// MARK: - Activity Set Picker
+// MARK: - Activity Set Picker (unchanged)
 
 struct ActivitySetPicker: View {
     let sets: [ActivitySet]
-    let manager: TimeTrackingManager  // NEW: Pass the manager in
+    let manager: TimeTrackingManager
 
     var activeSet: ActivitySet? { sets.first(where: { $0.isActive }) }
 
     var body: some View {
         Menu {
             ForEach(sets) { set in
-                Button { manager.manualSwitchToSet(set) } label: { // UPDATED Action
+                Button { manager.manualSwitchToSet(set) } label: {
                     HStack {
                         Text(set.name)
                         if set.isActive { Image(systemName: "checkmark") }

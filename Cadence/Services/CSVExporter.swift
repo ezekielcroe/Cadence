@@ -100,7 +100,7 @@ class CSVExporter {
             row.append(formatDuration(block.duration))
         }
         if options.includePauseDuration {
-            row.append(formatDuration(block.totalPauseDuration))
+            row.append(formatDuration(block.pauseDuration))
         }
         if options.includeSwitchCount {
             row.append("\(block.switchCount)")

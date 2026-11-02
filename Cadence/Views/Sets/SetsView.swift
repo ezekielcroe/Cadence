@@ -81,11 +81,5 @@ struct SetsView: View {
 }
 
 #Preview {
-    let config    = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(
-        for: Activity.self, ActivitySet.self, TimeBlock.self,
-             TimeBlockRule.self, Remark.self, DayNote.self,
-        configurations: config
-    )
-    return SetsView().modelContainer(container)
+    SetsView().modelContainer(try! CadenceSchema.makeContainer(inMemory: true))
 }

@@ -26,6 +26,17 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage("appTheme") private var appTheme: AppTheme = .system
 
+    /// Retrospective spans at or above this length open the confirm sheet.
+    @AppStorage("retroConfirmThreshold") private var retroConfirmThreshold: Double = 4 * 3600
+    @AppStorage(Accountability.key) private var accountable = false
+
+    private let thresholdOptions: [(label: String, value: Double)] = [
+        ("2 hours",   2 * 3600),
+        ("4 hours",   4 * 3600),
+        ("8 hours",   8 * 3600),
+        ("12 hours", 12 * 3600),
+    ]
+
     var body: some View {
         NavigationStack {
             Form {
@@ -41,6 +52,40 @@ struct SettingsView: View {
                     Text("Activities")
                 } footer: {
                     Text("Create activity sets (e.g. Work, Personal) and assign activities to each. Activities can belong to multiple sets and carry a goal direction (Keep High, Keep Low, Neutral).")
+                }
+
+                // MARK: - Accountability
+                Section {
+                    Toggle(isOn: $accountable) {
+                        Label("Call Out Unlogged Time", systemImage: "exclamationmark.circle")
+                    }
+
+                    NavigationLink {
+                        TrackingWindowSettingsView()
+                    } label: {
+                        Label("Accountable Hours", systemImage: "clock.badge.checkmark")
+                    }
+                } header: {
+                    Text("Accountability")
+                } footer: {
+                    if accountable {
+                        Text("Unlogged time within your accountable hours (\(TrackingWindow.current.displayString)) is marked on Today and in the Journal and counted in each day's header. Insights adds unaccounted time, a focus score and good/bad colours for your goals.")
+                    } else {
+                        Text("Blank time stays quiet: no counts, no unaccounted totals, no red or green. The Journal's Ledger view always shows blank time so you can fill it in. Turn this on for work-style accountability.")
+                    }
+                }
+
+                // MARK: - Logging
+                Section {
+                    Picker("Confirm long spans over", selection: $retroConfirmThreshold) {
+                        ForEach(thresholdOptions, id: \.value) { option in
+                            Text(option.label).tag(option.value)
+                        }
+                    }
+                } header: {
+                    Text("Logging")
+                } footer: {
+                    Text("Logging a stretch longer than this asks you to check where it starts first, so a forgotten morning doesn't become one huge entry.")
                 }
 
                 // MARK: - General
@@ -70,18 +115,11 @@ struct SettingsView: View {
                 } header: {
                     Text("Journal")
                 } footer: {
-                    Text("Set morning intention and evening reflection reminders. Intentions and reflections appear in your daily timeline alongside activity records.")
+                    Text("Set morning intention and evening reflection reminders. Intentions and reflections open and close each day on Today and in the Journal.")
                 }
 
                 // MARK: - Tracking Behavior
                 Section {
-
-                    NavigationLink {
-                        BackgroundTrackingView()
-                    } label: {
-                        Label("Background Tracking", systemImage: "moon.fill")
-                    }
-
                     NavigationLink {
                         TimerDisplaySettingsView()
                     } label: {
@@ -96,7 +134,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Tracking Behavior")
                 } footer: {
-                    Text("Controls how Cadence tracks time in the background, when to auto-stop, timer alerts, and notification preferences including inactivity reminders.")
+                    Text("Timer alerts and notification preferences, including inactivity reminders. Timers keep running while the app is in the background or closed — nothing is auto-stopped.")
                 }
 
                 // MARK: - Data & Storage
@@ -109,7 +147,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Data & Storage")
                 } footer: {
-                    Text("Export your activity history and remarks as CSV, create backups, or archive old records.")
+                    Text("Export your entries and notes as CSV, create backups, or archive old records. Timesheet PDFs are exported from Insights.")
                 }
 
                 // MARK: - About
@@ -123,40 +161,40 @@ struct SettingsView: View {
 
                     DisclosureGroup {
                         VStack(alignment: .leading, spacing: 16) {
-                            
+
                             tipRow(
-                                icon: "switch.2",
+                                icon: "hand.tap",
                                 tint: .blue,
-                                title: "Start & Log Modes",
-                                body: "Choose your tracking style from the Tracking tab. 'Start' mode begins a timer for what you are doing right now. 'Log' mode lets you catch up by retrospectively labeling the time since your last entry."
+                                title: "Tap to Log, Hold to Time",
+                                body: "Tap an activity to label the time since your last entry — nothing to arm, nothing to forget. Hold an activity to start a live timer instead; while it runs, tapping another activity switches it, and Stop goes back to logging."
                             )
-                            
+
                             tipRow(
-                                icon: "play.circle.fill",
+                                icon: "tag.fill",
                                 tint: .green,
-                                title: "Quick Switching",
-                                body: "Tap any activity to start the clock or log a duration. Tap a different activity to switch seamlessly — the previous one is capped and saved automatically."
+                                title: "Labeling Long Spans",
+                                body: "Stretches longer than your confirm threshold open a sheet where you can adjust the start time. Anything before the start stays blank in your journal, and you can fill it in later."
                             )
 
                             tipRow(
                                 icon: "timer",
                                 tint: .orange,
                                 title: "Session Timer",
-                                body: "Set a target duration for any session using the bell icon. You'll get an alert (with sound and haptics) when time's up, even if the app is backgrounded."
+                                body: "Hold an activity and choose Start with goal, or tap the bell on a running timer. You'll get an alert (with sound and haptics) when time's up, even if the app is backgrounded."
                             )
 
                             tipRow(
                                 icon: "note.text",
                                 tint: .blue,
-                                title: "Remarks & Tags",
-                                body: "Add timestamped notes to your running activities, or attach them to previous ones in Log mode. Use #hashtags to categorize, then filter across all remarks in the Records tab."
+                                title: "Notes & Tags",
+                                body: "Every note belongs to an entry. Write one from the card that appears after each tap, from a running timer, or by tapping an entry. Use #hashtags to group notes, then filter or search them in the Journal."
                             )
 
                             tipRow(
                                 icon: "sun.horizon.fill",
                                 tint: .orange,
                                 title: "Intentions & Reflections",
-                                body: "Set a daily intention each morning and write a reflection each evening. These bookend your day in the Records timeline and help you stay mindful."
+                                body: "Set a daily intention each morning and write a reflection each evening. The intention opens the day and the reflection closes it, on Today and in the Journal. The reflection editor shows a one-line summary of your day."
                             )
 
                             tipRow(
@@ -169,15 +207,22 @@ struct SettingsView: View {
                             tipRow(
                                 icon: "hand.tap.fill",
                                 tint: .teal,
-                                title: "Manage Records",
-                                body: "In the Records timeline, long-press any block to edit its time, change the activity, or split it in two. Double-tap a block to quickly add an inline note."
+                                title: "Fixing Your Record",
+                                body: "Tap any entry for its page: notes, times, split or delete. In the Journal, switch to Ledger to fill blank time, swipe to edit or delete, or tap Select to merge entries that follow each other."
                             )
 
                             tipRow(
-                                icon: "moon.fill",
+                                icon: "clock.badge.checkmark",
                                 tint: .indigo,
-                                title: "Background Tracking",
-                                body: "When you leave the app, your current activity keeps tracking. If you're away too long, Cadence auto-stops at your configured limit. State is saved so nothing is lost, even if iOS terminates the app."
+                                title: "Accountable Hours",
+                                body: "With Call Out Unlogged Time on, only the hours you set here (say, 09:00–18:00 on weekdays) are checked for blank time. Anything you log outside them is still kept and shown."
+                            )
+
+                            tipRow(
+                                icon: "doc.text.fill",
+                                tint: .gray,
+                                title: "Timesheet Export",
+                                body: "Generate a supervisor-ready PDF for any period from Insights (the share button): chronological rows, day subtotals, breaks, notes, and unaccounted time as its own labeled line."
                             )
 
                             tipRow(
@@ -219,71 +264,6 @@ struct SettingsView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-}
-
-// MARK: - Background Tracking View
-
-struct BackgroundTrackingView: View {
-    @AppStorage("maxBackgroundDuration") private var maxBackgroundDuration: Double = 900
-
-    let durationOptions: [(label: String, value: TimeInterval)] = [
-        ("10 minutes",  600),
-        ("15 minutes",  900),
-        ("30 minutes", 1800),
-        ("45 minutes", 2700),
-        ("1 hour",     3600),
-        ("2 hours",    7200),
-        ("Never stop", .infinity)
-    ]
-
-    var body: some View {
-        Form {
-            Section {
-                Text("When you leave the app, your current activity keeps running. If you don't return within the limit below, Cadence will auto-stop the activity at that point.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
-                Picker("Duration", selection: $maxBackgroundDuration) {
-                    ForEach(durationOptions, id: \.value) { option in
-                        Text(option.label).tag(option.value)
-                    }
-                }
-                .pickerStyle(.inline)
-            } header: {
-                Text("Auto-Stop After")
-            } footer: {
-                if maxBackgroundDuration == .infinity {
-                    Text("Activity will track indefinitely — it won't auto-stop no matter how long you're away.")
-                } else {
-                    Text("If you're away longer than \(maxBackgroundDuration.formattedDuration), the activity stops at that mark and the remaining time appears as a gap.")
-                }
-            }
-
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Label("How It Works", systemImage: "info.circle")
-                        .font(.headline)
-
-                    Text("Cadence records a timestamp when you leave and calculates elapsed time when you return. No background processing runs — this uses zero battery.")
-                    Text("If iOS terminates the app while it's in the background (which is normal), Cadence recovers the session on next launch using the saved timestamp.")
-                    Text("A reminder notification is sent 5 minutes before the auto-stop limit to give you a chance to return.")
-
-                    if maxBackgroundDuration != .infinity {
-                        Text("Activity auto-stops after \(maxBackgroundDuration.formattedDuration) if you don't come back.")
-                            .foregroundStyle(.orange)
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            } header: {
-                Text("About")
-            }
-        }
-        .navigationTitle("Background Tracking")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -359,7 +339,7 @@ struct NotificationSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("Cadence can notify you about timer completions, background activity changes, and more.")
+                Text("Cadence can notify you about timer completions, scheduled set changes, and inactivity.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -378,17 +358,7 @@ struct NotificationSettingsView: View {
                     notificationRow(
                         icon: "timer",
                         tint: .red,
-                        text: "Session timer completion — plays an alert sound and vibrates when your target duration is reached."
-                    )
-                    notificationRow(
-                        icon: "bell.badge",
-                        tint: .orange,
-                        text: "Background warning — notifies you 5 minutes before Cadence auto-stops your activity."
-                    )
-                    notificationRow(
-                        icon: "stop.circle",
-                        tint: .secondary,
-                        text: "Activity stopped — confirms when an activity is auto-stopped due to background timeout or pause timeout."
+                        text: "Session timer completion — plays an alert sound and vibrates when your target duration is reached, including when it completes while the app is closed."
                     )
                     notificationRow(
                         icon: "arrow.triangle.swap",
@@ -402,6 +372,15 @@ struct NotificationSettingsView: View {
                 // MARK: Inactivity Reminder
                 Section {
                     Toggle("Inactivity Reminder", isOn: $inactivityEnabled)
+                        .onChange(of: inactivityEnabled) { _, isOn in
+                            guard isOn else { return }
+                            NotificationPermission.requestIfNeeded { granted in
+                                if !granted {
+                                    inactivityEnabled = false
+                                    showingPermissionAlert = true
+                                }
+                            }
+                        }
 
                     if inactivityEnabled {
                         Picker("Remind after", selection: $inactivityInterval) {
@@ -577,11 +556,5 @@ class HapticManager {
 // MARK: - Preview
 
 #Preview {
-    let config = ModelConfiguration(isStoredInMemoryOnly: true)
-    let container = try! ModelContainer(
-        for: Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self,
-             Remark.self, DayNote.self,
-        configurations: config
-    )
-    return SettingsView().modelContainer(container)
+    SettingsView().modelContainer(try! CadenceSchema.makeContainer(inMemory: true))
 }

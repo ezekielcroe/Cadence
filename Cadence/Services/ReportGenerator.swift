@@ -349,18 +349,13 @@ class ReportGenerator {
         // because we don't store individual pause timestamps.
         let fullRaw = blockEnd.timeIntervalSince(blockStart)
         let overlapRatio = fullRaw > 0 ? clampedRaw / fullRaw : 1.0
-        let scaledPause  = block.totalPauseDuration * overlapRatio
+        let scaledPause  = block.pauseDuration * overlapRatio
 
         return max(0, clampedRaw - scaledPause)
     }
 
     private func filterBlocks(_ blocks: [TimeBlock], in range: (start: Date, end: Date)) -> [TimeBlock] {
-        blocks.filter { block in
-            guard block.activityID != nil else { return false }
-            guard block.startTime < range.end else { return false }
-            let blockEnd = block.endTime ?? Date()
-            return blockEnd > range.start
-        }
+        blocks.filter { $0.startTime < range.end && ($0.endTime ?? Date()) > range.start }
     }
 
     private func calculateTotalDuration(_ blocks: [TimeBlock], in range: (start: Date, end: Date)) -> TimeInterval {

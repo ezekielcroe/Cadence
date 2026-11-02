@@ -4,37 +4,32 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var timeTrackingManager: TimeTrackingManager?
-    @State private var selectedTab = 2 // Default to Timer
+    @State private var selectedTab = 0 // Today
 
     var body: some View {
         Group {
             if let manager = timeTrackingManager {
                 TabView(selection: $selectedTab) {
 
-                    // Tab 0: Records — raw timeline log
-                    RecordsView()
-                        .tabItem { Label("Records", systemImage: "timeline.selection") }
+                    // Tab 0: Today — the day so far, the "now" card and the activity grid
+                    TodayView(manager: manager)
+                        .tabItem { Label("Today", systemImage: "sun.max") }
                         .tag(0)
 
-                    // Tab 1: Remarks — narrative prose thread + tag search
-                    RemarksTimelineView()
-                        .tabItem { Label("Remarks", systemImage: "book.pages") }
+                    // Tab 1: Journal — past days as diary pages, or the Ledger to edit them
+                    JournalView()
+                        .tabItem { Label("Journal", systemImage: "book") }
                         .tag(1)
 
-                    // Tab 2: Timer — center, primary action
-                    TrackingView(manager: manager)
-                        .tabItem { Label("Timer", systemImage: "timer") }
+                    // Tab 2: Insights — periodic summaries
+                    ReportsView()
+                        .tabItem { Label("Insights", systemImage: "chart.xyaxis.line") }
                         .tag(2)
 
-                    // Tab 3: Reports — periodic summaries
-                    ReportsView()
-                        .tabItem { Label("Reports", systemImage: "chart.xyaxis.line") }
-                        .tag(3)
-
-                    // Tab 4: Settings — includes Sets management
+                    // Tab 3: Settings — includes Sets management
                     SettingsView()
                         .tabItem { Label("Settings", systemImage: "gear") }
-                        .tag(4)
+                        .tag(3)
                 }
             } else {
                 ProgressView("Loading Cadence...")
@@ -48,9 +43,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(
-            for: [Activity.self, ActivitySet.self, TimeBlock.self, TimeBlockRule.self,
-                  Remark.self, DayNote.self],
-            inMemory: true
-        )
+        .modelContainer(try! CadenceSchema.makeContainer(inMemory: true))
 }

@@ -37,7 +37,7 @@ struct SchedulesView: View {
                     Label("Add Schedule", systemImage: "clock.badge.plus")
                 }
             } footer: {
-                Text("Schedules control when gaps are tracked and can automatically switch the active Activity Set.")
+                Text("Schedules switch the active activity set automatically at the times you choose, so Today shows the right activities.")
             }
         }
         .listStyle(.insetGrouped)
@@ -236,7 +236,7 @@ struct ScheduleEditView: View {
             } header: {
                 Text("Associated Set")
             } footer: {
-                Text("When this schedule is active, the app will automatically track gaps and switch to this set's assigned Entry Mode.")
+                Text("While this schedule is active, Today shows this set's activities.")
             }
 
             // MARK: - Schedules & Enabling Toggles

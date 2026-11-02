@@ -72,7 +72,7 @@ struct JournalSettingsView: View {
             // Description
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Intentions and reflections appear in the Journal tab alongside your regular remarks.")
+                    Text("Intentions and reflections open and close each day on Today and in the Journal.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Text("Enable notifications to get a gentle daily prompt for each.")
